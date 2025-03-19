@@ -94,7 +94,7 @@ begin
          pwm_quarter_tick <= '0';
       elsif rising_edge(clk) then
          pwm_counter <= pwm_counter + 1;
-         if pwm_counter = PWM_PERIOD/4 then
+         if pwm_counter = PWM_PERIOD*4 then
             pwm_counter <= (others => '0');
             pwm_quarter_tick <= '1';
          else
