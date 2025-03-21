@@ -13,9 +13,10 @@ architecture test of tb is
      CLK_PERIOD_NS			:	POSITIVE	RANGE	1	TO	100     := 10;	-- clk period in nanoseconds
      MIN_KITT_CAR_STEP_MS	:	POSITIVE	RANGE	1	TO	2000    := 1;	-- Minimum step period in milliseconds (i.e., value in milliseconds of Delta_t)
 
-     PERIOD_INIT      :	INTEGER	RANGE	1 TO 1000000 := 1000;	-- period in num of clk cycles
+     --PERIOD_INIT      :	INTEGER	RANGE	1 TO 1000000 := 1000;	-- period in num of clk cycles
      NUM_OF_SWS		:	INTEGER	RANGE	1 TO 16 := 16;	-- Number of input switches
-     NUM_OF_LEDS		:	INTEGER	RANGE	1 TO 16 := 16	-- Number of output LEDs
+     NUM_OF_LEDS		:	INTEGER	RANGE	1 TO 16 := 16;	-- Number of output LEDs
+     TAIL_LENGTH				:	INTEGER	RANGE	1 TO 16	:= 4	-- Tail length
 
   );
   Port (
@@ -37,7 +38,7 @@ architecture test of tb is
    constant MIN_KITT_CAR_STEP_MS	:	POSITIVE	:= 1;	-- Minimum step period in milliseconds (i.e., value in milliseconds of Delta_t)
    constant NUM_OF_SWS      :	INTEGER	:= 16;	-- Number of input switches
    constant NUM_OF_LEDS      :	INTEGER	:= 16;	-- Number of output LEDs
-   constant PWM_PERIOD : INTEGER := 1000; -- period in num of clk cycles
+   constant PWM_PERIOD : INTEGER := 4; -- period in num of clk cycles
    
    signal reset : STD_LOGIC := '0';
    signal clk : STD_LOGIC := '0';
@@ -61,7 +62,7 @@ begin
      CLK_PERIOD_NS			=> CLK_PERIOD_NS,	-- clk period in nanoseconds
      MIN_KITT_CAR_STEP_MS	=> MIN_KITT_CAR_STEP_MS,	-- Minimum step period in milliseconds (i.e., value in milliseconds of Delta_t)
 
-     PERIOD_INIT      => PWM_PERIOD,	-- period in num of clk cycles
+     --PERIOD_INIT      => PWM_PERIOD,	-- period in num of clk cycles
      NUM_OF_SWS		=> 16,	-- Number of input switches
      NUM_OF_LEDS		=> 16	-- Number of output LEDs
 
@@ -110,12 +111,12 @@ begin
          leds_2 <= (others => '0');
          leds_3 <= (others => '0');
       elsif rising_edge(clk) then
-         if(pwm_quarter_tick = '1') then
+         --if(pwm_quarter_tick = '1') then
             leds_0 <= leds_1;
             leds_1 <= leds_2;
             leds_2 <= leds_3;
             leds_3 <= leds;
-         end if;
+         --end if;
       end if;
    end process;
 

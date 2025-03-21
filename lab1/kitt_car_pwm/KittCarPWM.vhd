@@ -98,7 +98,7 @@ begin
 
 			-------- Duty Cycle ----------
 			Ton		    =>   std_logic_vector(to_unsigned(I, NUM_OF_LEDS)),
-			Period      =>   std_logic_vector(to_unsigned(TAIL_LENGTH, NUM_OF_LEDS)),
+			Period      =>   std_logic_vector(to_unsigned(TAIL_LENGTH - 1, NUM_OF_LEDS)),
 			
 			PWM		    =>   PWM_out(I - 1)
 			----------------------------		
