@@ -9,17 +9,17 @@ entity depacketizer is
         FOOTER: INTEGER :=16#F1#
     );
     port (
-        clk   : in std_logic;
+        clk     : in std_logic;
         aresetn : in std_logic;
 
-        s_axis_tdata : in std_logic_vector(7 downto 0);
+        s_axis_tdata  : in std_logic_vector(7 downto 0);
         s_axis_tvalid : in std_logic; 
         s_axis_tready : out std_logic; 
 
-        m_axis_tdata : out std_logic_vector(7 downto 0);
+        m_axis_tdata  : out std_logic_vector(7 downto 0);
         m_axis_tvalid : out std_logic; 
         m_axis_tready : in std_logic; 
-        m_axis_tlast : out std_logic
+        m_axis_tlast  : out std_logic
       );
 end entity depacketizer;
 
@@ -43,26 +43,26 @@ begin
             buf      <= (others => (others => '0'));
             sent <= '0';
         elsif rising_edge(clk) then
-            state        <= next_state;
+            state      <= next_state;
             m_axis_tlast_internal <= next_m_axis_tlast;
-            if s_axis_tvalid = '1' then
+            if s_axis_tvalid = '1' and m_axis_tready = '1' then
                 buf(0) <= s_axis_tdata;
                 buf(1) <= buf(0);
-                sent <= '0';
+                sent   <= '0';
             elsif m_axis_tready = '1' and m_axis_tvalid_internal = '1' then
-                sent <= '1';
+                sent   <= '1';
             end if;
         end if;
     end process;
 
-    process (state, s_axis_tdata, s_axis_tvalid, buf(0))
+    process (state, s_axis_tdata, s_axis_tvalid, buf(0), m_axis_tready)
     begin
         next_state        <= state;
         next_m_axis_tlast <= m_axis_tlast_internal;
         case state is 
             when IDLE  =>
-                if s_axis_tvalid = '1' and s_axis_tdata = std_logic_vector(to_unsigned(HEADER, 8)) then
-                    next_state   <= PASS_THROUGH;
+                if s_axis_tvalid = '1' and s_axis_tdata = std_logic_vector(to_unsigned(HEADER, 8)) and m_axis_tready = '1' then
+                    next_state        <= PASS_THROUGH;
                     next_m_axis_tlast <= '0';
                 end if;
             when PASS_THROUGH =>
@@ -75,10 +75,10 @@ begin
         end case;
     end process;
 
-    s_axis_tready <= '1';
+    s_axis_tready <= m_axis_tready;
     m_axis_tvalid_internal <= '1' when (buf(0) /= std_logic_vector(to_unsigned(HEADER,8)) and buf(1) /= std_logic_vector(to_unsigned(HEADER,8))  and buf(1) /= std_logic_vector(to_unsigned(FOOTER,8))) and state = PASS_THROUGH and sent = '0' else '0';
     m_axis_tvalid <= m_axis_tvalid_internal;
-    m_axis_tlast <= m_axis_tlast_internal;
+    m_axis_tlast  <= m_axis_tlast_internal;
     m_axis_tdata  <= buf(1);
     
 end architecture;
