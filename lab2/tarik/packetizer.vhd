@@ -88,7 +88,7 @@ begin
                     next_state <= PASS_THROUGH;
                 end if;
             when PASS_THROUGH =>
-                if s_axis_tlast = '1' then
+                if s_axis_tvalid = '1' and s_axis_tlast = '1' and s_axis_tready = '1' then
                     next_state <= ENDING;
                 end if;
             when ENDING =>
