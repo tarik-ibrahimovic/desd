@@ -85,12 +85,9 @@ architecture Behavioral of img_conv_tb is
     signal done_conv: std_logic;
 
 begin
-    process
-    begin
-    wait for 5ns;
-    m_axis_tready <=not m_axis_tready after 80 ns;
-    end process;
-    
+
+    m_axis_tready <= not m_axis_tready after 80 ns;
+
     clk <= not clk after 5 ns;
     
        
@@ -98,7 +95,6 @@ begin
     process (clk)
     begin
         if(rising_edge(clk)) then
-        
             conv_data<=mem(to_integer(unsigned(conv_addr)));
         end if;
     end process;
@@ -129,38 +125,19 @@ begin
         start_conv<='1';
         wait until rising_edge(clk);
         start_conv<='0';
---        wait for 80 ns;
---        aresetn<='0';
---        wait for 80 ns;
---        aresetn<='1';
---        wait for 95 ns;
---        m_axis_tready <= '0';
---        wait for 20 ns;
---        m_axis_tready <= '1';
         wait;
     end process;
-    
---    process
---    begin
---        wait for 95 ns;
---        m_axis_tready <= '0';
---        wait for 20 ns;
---        m_axis_tready <= '1'; --110ns 215
---        wait for 205 ns;
---        m_axis_tready <= '0';
---        wait for 80 ns;
---        m_axis_tready <= '1';
---        wait;
---    end process;
-   
+
     process
         begin
+            mem(0) <= std_logic_vector(to_unsigned(127, 7));
+            
             for i in 1 to (2**LOG2_N_COLS)*(2**LOG2_N_ROWS)-1 loop
                 mem(i) <= std_logic_vector(to_unsigned(i, 7));
             
             end loop;
-            mem(0) <= std_logic_vector(to_unsigned(11, 7));
          wait;
-    
+        
     end process;
+    
 end Behavioral;

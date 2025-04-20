@@ -32,384 +32,188 @@ architecture rtl of img_conv is
     type conv_mat_type is array(0 to 2, 0 to 2) of integer;
     constant conv_mat : conv_mat_type := ((-1,-1,-1),(-1,8,-1),(-1,-1,-1)); 
     
-    constant n_rows : integer := 2**LOG2_N_ROWS;
-    constant n_cols : integer := 2**LOG2_N_COLS;    
+    constant n_rows : integer := 2**LOG2_N_COLS;
+    constant n_cols : integer := 2**LOG2_N_ROWS;
+    
+    type state_t is (IDLE, RECEIVING, CONV);
+    
+    signal state, next_state : state_t;
+                                                    
+    signal bram_addr  : unsigned(LOG2_N_COLS+LOG2_N_ROWS-1 downto 0);
+    type window_t is array (0 to 8) of std_logic_vector(6 downto 0);
+    signal window    : window_t;
+    
+    signal cnt        : unsigned(4 downto 0);
 
+    signal row_cnt    : unsigned(LOG2_N_ROWS-1 downto 0);
+    signal col_cnt    : unsigned(LOG2_N_COLS-1 downto 0);
+    
+    type mres_t is array(0 to 8) of signed(12 downto 0);
+    signal mres : mres_t := (others => (others => '0'));
+    signal sum_all   : signed(12 downto 0); -- -1424 < sum_all < 1424. at least 12 bit + 1 for the sign needed
+    signal m_axis_tvalid_int : std_logic;
+    signal m_axis_tdata_int : std_logic_vector(7 downto 0);
+--    signal conv_data_d : std_logic_vector;
+
+    
+begin
+    -----parallel multiplier + summer
+    mres(0) <= signed('0' & window(0)) * to_signed(conv_mat(0, 0), 5);
+    mres(1) <= signed('0' & window(1)) * to_signed(conv_mat(0, 1), 5);
+    mres(2) <= signed('0' & window(2)) * to_signed(conv_mat(0, 2), 5);
+    mres(3) <= signed('0' & window(3)) * to_signed(conv_mat(1, 0), 5);
+    mres(4) <= signed('0' & window(4)) * to_signed(conv_mat(1, 1), 5);
+    mres(5) <= signed('0' & window(5)) * to_signed(conv_mat(1, 2), 5);
+    mres(6) <= signed('0' & window(6)) * to_signed(conv_mat(2, 0), 5);
+    mres(7) <= signed('0' & window(7)) * to_signed(conv_mat(2, 1), 5);
+    mres(8) <= signed('0' & window(8)) * to_signed(conv_mat(2, 2), 5);
      
-    signal conv_on : std_logic := '0'; -- 1 on 0 off  
-    signal conv_on_delay : std_logic := '0';
-    signal conv_on_2delay : std_logic := '0';
-    signal conv_on_3delay : std_logic := '0';
-    
-    signal conv_off : std_logic := '0'; 
-    signal conv_off_delay : std_logic := '0';
-    
-    signal count_rows : unsigned (LOG2_N_ROWS-1 downto 0) := (others => '0') ;
-    signal count_cols : unsigned (LOG2_N_COLS-1 downto 0) := (others => '0') ; 
-    
-    signal adress : unsigned (LOG2_N_ROWS+LOG2_N_COLS-1 downto 0 ):= (others => '0') ;
-
-    signal adrs_1clk_delay : unsigned (LOG2_N_ROWS+LOG2_N_COLS-1 downto 0 ):= (others => '0') ;
-    signal adrs_2clk_delay : unsigned (LOG2_N_ROWS+LOG2_N_COLS-1 downto 0 ):= (others => '0') ;
-    signal adrs_3clk_delay : unsigned (LOG2_N_ROWS+LOG2_N_COLS-1 downto 0 ):= (others => '0') ;
-    signal adrs_4clk_delay : unsigned (LOG2_N_ROWS+LOG2_N_COLS-1 downto 0 ):= (others => '0') ;   
-    
-    signal rows_idx : integer range 0 to 2;  
-    signal cols_idx : integer range 0 to 2;  --idx's for cmat 
-    
-    constant cnv_mat_adrs : conv_mat_type :=   ((-n_cols-1, -n_cols,-n_cols+1),  -- maps adresses from conv_mat to bram storage
-                                                (       -1,       0,       +1),  
-                                                ( n_cols-1,  n_cols, n_cols+1));
-                                                
-    signal conv : unsigned (6 downto 0) := (others => '0') ;
-    signal px_conv_temp : integer range -1424 to 1424 := 0;
-    signal sum_temp : integer range -1424 to 1424 := 0;
-    
-    signal i_delayed : integer range 0 to 2;
-    signal j_delayed : integer range 0 to 2;  
-    
-    signal i_conv_mat : integer range 0 to 2;
-    signal j_conv_mat : integer range 0 to 2; 
-    
-    signal m_axis_tvalid_int : std_logic := '0'; 
-    signal int_fifo_tready: std_logic := '0';
-    signal write_tdata : std_logic_vector(7 downto 0) := (others => '0');
-    signal int_axis_tlast : std_logic := '0';
-    
-    --signal conv_on_delay : std_logic := '0';                                       
-    
-    procedure sweep_idxs (                    -- uptades the idxs to step through cnv_mat_adrs and image's pixels
-        i_dim : in integer range 2 to n_rows; --
-        j_dim : in integer range 2 to n_cols; -- variable dimensions for zero padding: steps through a submatrix of cnv_mat_adrs
-        
-        i_conv : inout integer range 0 to 2; --row idx 
-        j_conv : inout integer range 0 to 2; --column idx
-        
-        i_img : inout integer range 0 to n_rows - 1; --row idx 
-        j_img : inout integer range 0 to n_cols - 1;
-        
-        adress : inout unsigned(LOG2_N_ROWS+LOG2_N_COLS-1 downto 0) --adress
-        
-    ) is
-    begin
-        if j_conv = j_dim-1 and i_conv = i_dim-1 then
-            adress := adress + 1;
-            i_conv := 0;
-            j_conv := 0;
-            
-            if j_img =  n_cols - 1 and i_img =  n_rows - 1 then
-                i_img := 0;
-                j_img := 0;
-            
-            elsif j_img  = n_cols - 1  then
-                j_img  := 0;
-                i_img  := i_img  + 1;
-        
-            else
-                j_img  := j_img  + 1;
-                
-            end if;
-            
-        elsif j_conv  = j_dim-1 then
-            j_conv  := 0;
-            i_conv  := i_conv  + 1;
-    
-        else
-            j_conv  := j_conv  + 1;
-            
-        end if;
-    end procedure;                                           
-
-
-
-    
-begin
-
-
-fifo_inst : entity work.AXIS_FIFO
-        generic map (
-            FIFO_WIDTH => 8,
-            FIFO_DEPTH => n_rows*n_cols
-        )
-        port map (
-            clk           => clk,
-            srst          => aresetn,
-
-            write_tdata   =>  write_tdata,
-            write_tvalid  => m_axis_tvalid_int,
-            write_tready  => int_fifo_tready,
-            write_tlast   => int_axis_tlast,
-
-            read_tdata    => m_axis_tdata,
-            read_tvalid   => m_axis_tvalid,
-            read_tready   => m_axis_tready,
-            read_tlast    => m_axis_tlast
-        );
-
-
-adress_generator: process(clk, aresetn)                -- for each clock cicle generates an address for the bram. 
-    variable rows_temp : integer range 0 to 2 := 0;    -- zero padding obtained by not asking adresses to bram *
-    variable cols_temp : integer range 0 to 2 := 0;
-    
-    variable count_rows_temp : integer range 0 to n_rows - 1 := 0;
-    variable count_cols_temp : integer range 0 to n_cols - 1 := 0;
-    
-    variable adress_temp : unsigned (LOG2_N_ROWS+LOG2_N_COLS-1 downto 0) := (others => '0');
-    
-begin
-    if aresetn = '0' then
-        conv_addr <= (others => '0');
-        rows_idx <= 0;
-        cols_idx <= 0;
-        adress <= (others => '0');
-        rows_temp := 0;
-        cols_temp := 0;
-        count_rows_temp := 0;
-        count_cols_temp := 0;
-        adress_temp := (others => '0');
-        count_rows <= (others => '0');
-        count_cols <= (others => '0');
-        i_conv_mat <= 0;
-        j_conv_mat <= 0;
-        
-    elsif rising_edge (clk) then
-        if conv_on = '1'and conv_off_delay = '0' then                    
-            if count_rows = 0 then 
-                if count_cols = 0 then --top-left corner
-                    conv_addr <= std_logic_vector(adress + cnv_mat_adrs(rows_idx + 1, cols_idx + 1));
-                    
-                    sweep_idxs(2, 2, rows_temp, cols_temp, count_rows_temp, count_cols_temp, adress_temp);
-                    rows_idx <= rows_temp;
-                    cols_idx <= cols_temp;
-                    count_rows <= to_unsigned(count_rows_temp, LOG2_N_ROWS);
-                    count_cols <= to_unsigned(count_cols_temp, LOG2_N_COLS);
-                    adress <= adress_temp;     
-                    
-                    i_conv_mat <= rows_idx + 1;
-                    j_conv_mat <= cols_idx + 1;
-                  
-                elsif count_cols = n_cols-1 then --top right corner
-                    conv_addr <= std_logic_vector(adress + cnv_mat_adrs(rows_idx + 1, cols_idx));
-                        
-                    sweep_idxs(2, 2, rows_temp, cols_temp, count_rows_temp, count_cols_temp, adress_temp);
-                    rows_idx <= rows_temp;
-                    cols_idx <= cols_temp;
-                    count_rows <= to_unsigned(count_rows_temp, LOG2_N_ROWS);
-                    count_cols <= to_unsigned(count_cols_temp, LOG2_N_COLS);
-                    adress <= adress_temp;    
-                    
-                    i_conv_mat <= rows_idx + 1;
-                    j_conv_mat <= cols_idx;
-                    
-                else --top edge
-                    conv_addr <= std_logic_vector(adress + cnv_mat_adrs(rows_idx + 1, cols_idx));                                
-                    
-                    sweep_idxs(2, 3, rows_temp, cols_temp, count_rows_temp, count_cols_temp, adress_temp);
-                    rows_idx <= rows_temp;
-                    cols_idx <= cols_temp;
-                    adress <= adress_temp;
-                    count_rows <= to_unsigned(count_rows_temp, LOG2_N_ROWS);
-                    count_cols <= to_unsigned(count_cols_temp, LOG2_N_COLS);
-                    
-                    i_conv_mat <= rows_idx + 1;
-                    j_conv_mat <= cols_idx;
-                    
-                end if;
-                
-            elsif count_rows = n_rows - 1 then
-                if count_cols = 0 then --bottom left corner
-                    conv_addr <= std_logic_vector(adress + cnv_mat_adrs(rows_idx, cols_idx + 1));
-                    
-                    sweep_idxs(2, 2, rows_temp, cols_temp, count_rows_temp, count_cols_temp, adress_temp);
-                    rows_idx <= rows_temp;
-                    cols_idx <= cols_temp;
-                    adress <= adress_temp;
-                    count_rows <= to_unsigned(count_rows_temp, LOG2_N_ROWS);
-                    count_cols <= to_unsigned(count_cols_temp, LOG2_N_COLS);     
-                    
-                    i_conv_mat <= rows_idx;
-                    j_conv_mat <= cols_idx + 1;
-                  
-                elsif count_cols = n_cols-1 then --bottoom right corner
-                    conv_addr <= std_logic_vector(adress + cnv_mat_adrs(rows_idx, cols_idx));
-                
-                    sweep_idxs(2, 2, rows_temp, cols_temp, count_rows_temp, count_cols_temp, adress_temp);
-                    rows_idx <= rows_temp;
-                    cols_idx <= cols_temp;
-                    adress <= adress_temp;
-                    count_rows <= to_unsigned(count_rows_temp, LOG2_N_ROWS);
-                    count_cols <= to_unsigned(count_cols_temp, LOG2_N_COLS);    
-                    
-                    i_conv_mat <= rows_idx;
-                    j_conv_mat <= cols_idx;
-                    
-                else --bottom edge
-                    conv_addr <= std_logic_vector(adress + cnv_mat_adrs(rows_idx, cols_idx));                                
-                    
-                    sweep_idxs(2, 3, rows_temp, cols_temp, count_rows_temp, count_cols_temp, adress_temp);
-                    rows_idx <= rows_temp;
-                    cols_idx <= cols_temp;
-                    adress <= adress_temp;
-                    count_rows <= to_unsigned(count_rows_temp, LOG2_N_ROWS);
-                    count_cols <= to_unsigned(count_cols_temp, LOG2_N_COLS); 
-                    
-                    i_conv_mat <= rows_idx;
-                    j_conv_mat <= cols_idx;
-                                       
-                end if;
-                
-            elsif count_cols = 0 then -- left edge
-                conv_addr <= std_logic_vector(adress + cnv_mat_adrs(rows_idx, cols_idx + 1));                                
-                    
-                sweep_idxs(3, 2, rows_temp, cols_temp, count_rows_temp, count_cols_temp, adress_temp);
-                rows_idx <= rows_temp;
-                cols_idx <= cols_temp;
-                adress <= adress_temp;
-                count_rows <= to_unsigned(count_rows_temp, LOG2_N_ROWS);
-                count_cols <= to_unsigned(count_cols_temp, LOG2_N_COLS);    
-                
-                i_conv_mat <= rows_idx;
-                j_conv_mat <= cols_idx + 1;
-                
-            elsif count_cols = n_cols - 1 then -- right edge
-                conv_addr <= std_logic_vector(adress + cnv_mat_adrs(rows_idx, cols_idx));                                
-                    
-                sweep_idxs(3, 2, rows_temp, cols_temp, count_rows_temp, count_cols_temp, adress_temp);
-                rows_idx <= rows_temp;
-                cols_idx <= cols_temp;
-                adress <= adress_temp;
-                count_rows <= to_unsigned(count_rows_temp, LOG2_N_ROWS);
-                count_cols <= to_unsigned(count_cols_temp, LOG2_N_COLS);
-                
-                i_conv_mat <= rows_idx;
-                j_conv_mat <= cols_idx;
-                    
-           else  -- not on the edges 
-                conv_addr <= std_logic_vector(adress + cnv_mat_adrs(rows_idx, cols_idx)); -- asks bram desired index
-                    
-                sweep_idxs(3, 3, rows_temp, cols_temp, count_rows_temp, count_cols_temp, adress_temp);
-                rows_idx <= rows_temp;
-                cols_idx <= cols_temp;
-                adress <= adress_temp;
-                count_rows <= to_unsigned(count_rows_temp, LOG2_N_ROWS);
-                count_cols <= to_unsigned(count_cols_temp, LOG2_N_COLS);         
-                
-                i_conv_mat <= rows_idx;
-                j_conv_mat <= cols_idx;
-                                    
-           end if;
-           
-        elsif conv_on = '1'and conv_off_delay = '1' then
-            sweep_idxs(3, 3, rows_temp, cols_temp, count_rows_temp, count_cols_temp, adress_temp);
-            adress <= adress_temp;
-            
-        end if;
-    
-    end if;             
-end process;
-    
-data_stream_manager : process(clk, aresetn) begin
-    if aresetn = '0' then
-        conv_on <= '0';
-        int_axis_tlast <= '0'; 
-        conv_off <= '0';
-        
-    elsif rising_edge(clk) then
-        if start_conv = '1' then
-            conv_on <= '1'; 
-        
-        elsif conv_on = '1' and conv_off_delay = '0' then
-            if adrs_4clk_delay /= adrs_3clk_delay then  -- here conv triggers to next convolved pixel
-                m_axis_tvalid_int <= '1';
-                
-            elsif  m_axis_tvalid_int = '1' and int_fifo_tready = '1' then --data transfered, tvalid low to avoid transfering same px for two times
-                m_axis_tvalid_int <= '0'; 
-                
-            end if;
+    sum_all <= resize(mres(0), 13) + resize(mres(1), 13) + resize(mres(2), 13)
+             + resize(mres(3), 13) + resize(mres(4), 13) + resize(mres(5), 13)
+             + resize(mres(6), 13) + resize(mres(7), 13) + resize(mres(8), 13);
              
-            if adrs_4clk_delay = to_unsigned(n_rows*n_cols-1,LOG2_N_ROWS+LOG2_N_COLS) then
-                int_axis_tlast <= '1';
-           
-            else
-                 int_axis_tlast <= '0';                                            
-           
-            end if;         
     
-            if (count_cols = n_cols - 1 and count_rows = n_rows-1) and (cols_idx = 1 and rows_idx = 1) then --very very last one
-                    conv_off <= '1'; 
-                    
-            end if;
-        end if;          
-    end if;
-end process;   
-        
-delayer : process(clk) begin
-    if rising_edge(clk) then
-            i_delayed <= i_conv_mat;
-            j_delayed <= j_conv_mat;
-              
-            conv_off_delay <= conv_off;
-            done_conv <= conv_off_delay;
+ process(sum_all)--manages overflow
+    begin
+        if sum_all < to_signed(0, sum_all'length) then
+            m_axis_tdata_int <= x"00";
             
-            conv_on_delay <= conv_on;
-            conv_on_2delay <= conv_on_delay;
-            conv_on_3delay <= conv_on_2delay;
+        elsif sum_all > to_signed(127, sum_all'length) then
+            m_axis_tdata_int <= x"7F";
             
-            adrs_1clk_delay <= adress;
-            adrs_2clk_delay <= adrs_1clk_delay;
-            adrs_3clk_delay <= adrs_2clk_delay;
-            adrs_4clk_delay <= adrs_3clk_delay;
-                   
-    end if;    
-end process;    
-         
-multiplier : process(clk, aresetn) 
-begin
-    if aresetn = '0' then
-        px_conv_temp <= 0;
-    
-    elsif rising_edge(clk) then
-        if conv_on_2delay = '1' then
-            px_conv_temp <= to_integer(unsigned(conv_data)) * conv_mat(i_delayed, j_delayed);   -- rename, for better understanding
+        else
+            m_axis_tdata_int <= std_logic_vector(resize(sum_all, 8));
+            
+        end if;
+ end process;
+ 
+  m_axis_tvalid <= m_axis_tvalid_int;
                         
-        end if;    
-    end if;     
-end process; 
+  process(clk, aresetn)
+        -- used to manage zero padding
+        variable nr, nr_prev : integer range 0 to n_rows - 1; --row indexes  for pixels of conv_mat inside image
+        variable nc, nc_prev : integer range 0 to n_cols - 1; --cols indexes  "     "   "       "      "     "
+                                                              -- they map where is the desired px inside the image  
+        variable drow, dcol : integer range -1 to 1;   --  
+        variable idx : integer range 0 to n_rows*n_cols-1;
+    begin
+        if aresetn = '0' then
+            state         <= IDLE;
+            conv_addr     <= (others => '0');
+            cnt           <= (others => '0');
+            row_cnt       <= (others => '0');
+            col_cnt       <= (others => '0');
+            bram_addr     <= (others => '0');
+            m_axis_tvalid_int <= '0';
+            m_axis_tdata  <= (others => '0');
+            window <= (others => (others => '0'));
+            m_axis_tlast <= '0';
+            done_conv <= '0';
+            
+        elsif rising_edge(clk) then
+            state <= next_state;
 
-sum_temp_sampler : process(clk, aresetn) 
-begin
-    if aresetn = '0' then
-        conv <= (others => '0');
-        sum_temp <= 0;
-        
-    elsif rising_edge(clk) then
-        if conv_on_3delay = '1' then
-            if adrs_4clk_delay /= adrs_3clk_delay then   --  send and overwrite 
-                if sum_temp < 0 then
-                    conv <= (others => '0');
+            case state is
+                when IDLE =>
+                    cnt <= (others => '0');
+                    m_axis_tlast <= '0'; 
+                    if start_conv = '1' then 
+                        done_conv <= '0';
                     
-                elsif sum_temp >= 128 then
-                    conv <= to_unsigned(127, conv'length);
+                    end if;
+                when RECEIVING =>
+                    drow := to_integer(cnt)/3 - 1;  --technically should not occupy a lot of resources, since 3 is constant and cnt just 5 bits
+                    dcol := to_integer(cnt) mod 3 - 1;
+                    nr   := to_integer(row_cnt) + drow;
+                    nc   := to_integer(col_cnt) + dcol;
                     
-                else
-                    conv <= to_unsigned(sum_temp, conv'length);
+                    nr_prev   := to_integer(row_cnt) + to_integer(cnt - 2)/3 - 1;
+                    nc_prev   := to_integer(col_cnt) + to_integer(cnt - 2) mod 3 - 1;
+                    
+                    if not (nr < 0 or nr > n_rows-1 or nc < 0 or nc > n_cols-1) and cnt <= to_unsigned(8, cnt'length) then
+                        idx := nr*n_cols + nc;
+                        conv_addr <= std_logic_vector(to_unsigned(idx, LOG2_N_COLS+LOG2_N_ROWS));
+                    end if;
+                    
+                    if cnt > to_unsigned(1, cnt'length) then
+                        if (nr_prev < 0 or nr_prev > n_rows-1 or nc_prev < 0 or nc_prev > n_cols-1) then
+                            window(to_integer(cnt) - 2) <= (others => '0');
+                        
+                        else
+                            window(to_integer(cnt) - 2) <= conv_data;
+                                                            
+                        end if;    
+                    end if;
+                    
+                    cnt <= cnt + 1;
+
+                when CONV =>
+                    m_axis_tvalid_int <= '1';
+                    m_axis_tdata  <= m_axis_tdata_int;
+                    cnt <= (others => '0');
+                    
+                    if m_axis_tready = '1' and m_axis_tvalid_int = '1' then
+                        m_axis_tvalid_int <= '0';
+                        -- advance address and coords
+                        if bram_addr < to_unsigned(n_rows*n_cols-1, bram_addr'length) then
+                            bram_addr <= bram_addr + 1;
+                            if col_cnt = to_unsigned(n_cols-1, col_cnt'length) then
+                                col_cnt <= (others=>'0');
+                                row_cnt <= row_cnt + 1;
+                           
+                            else
+                                col_cnt <= col_cnt + 1;
+                                m_axis_tlast <= '1';
+                                
+                            end if;
+                        else
+                            conv_addr <= (others=>'0');
+                            row_cnt   <= (others=>'0');
+                            col_cnt   <= (others=>'0');
+                            done_conv <= '1';
+                            
+                        end if;
+                    end if;
+            end case;
+        end if;
+    end process;
+
+    process(state, start_conv, cnt, bram_addr, m_axis_tready, m_axis_tvalid_int)
+    begin
+        next_state <= state;
+        case state is
+            when IDLE =>                 
+                if start_conv = '1' then 
+                    next_state <= RECEIVING;
                     
                 end if;
-                sum_temp <= px_conv_temp;
-            
-            else                                        --cumulate
-                sum_temp <= sum_temp + px_conv_temp;
-                --conv <= (others => '0');
-                
-            end if; 
-        end if;               
-    end if;
-
-end process;
-
-write_tdata <= '0' & std_logic_vector(conv);
-
+            when RECEIVING => 
+                if cnt = to_unsigned(10, cnt'length) then 
+                    next_state <= CONV; 
+                    
+                end if;
+            when CONV =>
+                if m_axis_tvalid_int = '1' and m_axis_tready = '1' then
+                    if bram_addr < to_unsigned(n_cols*n_rows-1, bram_addr'length) then
+                        next_state <= RECEIVING;
+                        
+                    else
+                        next_state <= IDLE;
+   
+                    end if;
+                end if;
+        end case;
+    end process;
+    
+    
 end architecture;
+
+
+
+
+
+
+
 
 
 
