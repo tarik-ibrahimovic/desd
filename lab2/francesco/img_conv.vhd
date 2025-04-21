@@ -119,10 +119,9 @@ begin
                     m_axis_tlast <= '0'; 
                     if start_conv = '1' then 
                         done_conv <= '0';
-                    
                     end if;
                 when RECEIVING =>
-                    drow := to_integer(cnt)/3 - 1;  --technically should not occupy a lot of resources, since 3 is constant and cnt just 5 bits
+                    drow := to_integer(((cnt sll 5) + (cnt sll 3) + (cnt sll 1) + cnt) srl 7); -- drow := to_integer(cnt)/3 - 1;  --technically should not occupy a lot of resources, since 3 is constant and cnt just 5 bits
                     dcol := to_integer(cnt) mod 3 - 1;
                     nr   := to_integer(row_cnt) + drow;
                     nc   := to_integer(col_cnt) + dcol;
@@ -207,16 +206,3 @@ begin
     
     
 end architecture;
-
-
-
-
-
-
-
-
-
-
-
-
-
