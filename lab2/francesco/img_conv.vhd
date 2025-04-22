@@ -133,7 +133,7 @@ begin
                 when RECEIVING =>
                     -- this two muxes are used to select the distance in rows as a function of cnt
                     -- cnt counts the pixels asked for convolution  
-                    if cnt <= 2 then -- if cnt is {0, 2}, we are in the first row: -1 distance from center row
+                    if cnt <= 2 then -- if cnt is {0, 2}, we are in the first row: -1 distance from central row
                         drow := -1;
                     elsif cnt <= 5 then -- center row: cnt is {3, 5}
                         drow := 0;      -- 0 distance
