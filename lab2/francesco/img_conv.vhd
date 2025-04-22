@@ -49,8 +49,8 @@ architecture rtl of img_conv is
     signal col_cnt    : unsigned(LOG2_N_COLS-1 downto 0);
     
     type mres_t is array(0 to 8) of signed(12 downto 0);
-    signal mres : mres_t := (others => (others => '0'));
-    signal sum_all   : signed(12 downto 0); -- -1424 < sum_all < 1424. at least 12 bit + 1 for the sign needed
+    signal mres, mres_reg : mres_t := (others => (others => '0'));
+    signal sum_all   : signed(14 downto 0); 
     signal m_axis_tvalid_int : std_logic;
     signal m_axis_tdata_int : std_logic_vector(7 downto 0);
 --    signal conv_data_d : std_logic_vector;
@@ -67,18 +67,25 @@ begin
     mres(6) <= signed('0' & window(6)) * to_signed(conv_mat(2, 0), 5);
     mres(7) <= signed('0' & window(7)) * to_signed(conv_mat(2, 1), 5);
     mres(8) <= signed('0' & window(8)) * to_signed(conv_mat(2, 2), 5);
+    
+    process(clk) begin               --registers the multplication result
+        if rising_edge(clk) then     
+            mres_reg <= mres;
+            
+        end if;
+    end process;
      
-    sum_all <= resize(mres(0), 13) + resize(mres(1), 13) + resize(mres(2), 13)
-             + resize(mres(3), 13) + resize(mres(4), 13) + resize(mres(5), 13)
-             + resize(mres(6), 13) + resize(mres(7), 13) + resize(mres(8), 13);
+    sum_all <= resize(mres_reg(0), 15) + resize(mres_reg(1), 15) + resize(mres_reg(2), 15)
+             + resize(mres_reg(3), 15) + resize(mres_reg(4), 15) + resize(mres_reg(5), 15)
+             + resize(mres_reg(6), 15) + resize(mres_reg(7), 15) + resize(mres_reg(8), 15);
              
     
  process(sum_all)--manages overflow
     begin
-        if sum_all < to_signed(0, sum_all'length) then
+        if sum_all(14) = '1'  then
             m_axis_tdata_int <= x"00";
             
-        elsif sum_all > to_signed(127, sum_all'length) then
+        elsif sum_all(13 downto 8) /= "000000" then
             m_axis_tdata_int <= x"7F";
             
         else
@@ -91,10 +98,16 @@ begin
                         
   process(clk, aresetn)
         -- used to manage zero padding
+--        variable nr, nr_prev : signed(LOG2_N_ROWS downto 0); --row indexes  for pixels of conv_mat inside image
+--        variable nc, nc_prev : signed(LOG2_N_COLS downto 0); --cols indexes  "     "   "       "      "     "
+--                                                              -- they map where is the desired px inside the image  
+--        variable drow, dcol, drow_prev, dcol_prev : signed(1 downto 0);     
+--        variable idx : unsigned(LOG2_N_ROWS+LOG2_N_COLS-1 downto 0);
+
         variable nr, nr_prev : integer range 0 to n_rows - 1; --row indexes  for pixels of conv_mat inside image
         variable nc, nc_prev : integer range 0 to n_cols - 1; --cols indexes  "     "   "       "      "     "
                                                               -- they map where is the desired px inside the image  
-        variable drow, dcol : integer range -1 to 1;   --  
+        variable drow, dcol, drow_prev, dcol_prev : integer range -1 to 1;    
         variable idx : integer range 0 to n_rows*n_cols-1;
     begin
         if aresetn = '0' then
@@ -119,22 +132,41 @@ begin
                     m_axis_tlast <= '0'; 
                     if start_conv = '1' then 
                         done_conv <= '0';
+                    
                     end if;
                 when RECEIVING =>
-                    drow := to_integer(((cnt sll 5) + (cnt sll 3) + (cnt sll 1) + cnt) srl 7); -- drow := to_integer(cnt)/3 - 1;  --technically should not occupy a lot of resources, since 3 is constant and cnt just 5 bits
-                    dcol := to_integer(cnt) mod 3 - 1;
-                    nr   := to_integer(row_cnt) + drow;
-                    nc   := to_integer(col_cnt) + dcol;
+                    --drow := to_integer(((cnt sll 5) + (cnt sll 3) + (cnt sll 1) + cnt) srl 7); -- drow := to_integer(cnt)/3 - 1;  --technically should not occupy a lot of resources, since 3 is constant and cnt just 5 bits
+                    if cnt <= 2 then
+                        drow := -1;
+                    elsif cnt <= 5 then
+                        drow := 0;
+                    else  -- cnt in 6..8
+                        drow := 1;
+                    end if;
                     
-                    nr_prev   := to_integer(row_cnt) + to_integer(cnt - 2)/3 - 1;
-                    nc_prev   := to_integer(col_cnt) + to_integer(cnt - 2) mod 3 - 1;
+                    if cnt-2 <= 2 then
+                        drow_prev := -1;
+                    elsif cnt-2 <= 5 then
+                        drow_prev := 0;
+                    else  
+                        drow_prev := 1;
+                    end if;
+                                        
+                    dcol := to_integer(cnt) mod 3 - 1;
+                    dcol_prev := to_integer(cnt-2) mod 3 - 1; 
+                    
+                    nr   := to_integer(row_cnt) + drow;
+                    nc   := to_integer(col_cnt) + dcol; --
+                    
+                    nr_prev   := to_integer(row_cnt) + drow_prev;
+                    nc_prev   := to_integer(col_cnt) + dcol_prev;
                     
                     if not (nr < 0 or nr > n_rows-1 or nc < 0 or nc > n_cols-1) and cnt <= to_unsigned(8, cnt'length) then
                         idx := nr*n_cols + nc;
                         conv_addr <= std_logic_vector(to_unsigned(idx, LOG2_N_COLS+LOG2_N_ROWS));
-                    end if;
                     
-                    if cnt > to_unsigned(1, cnt'length) then
+                    end if;                    
+                    if cnt > "00001" and cnt < "01011" then
                         if (nr_prev < 0 or nr_prev > n_rows-1 or nc_prev < 0 or nc_prev > n_cols-1) then
                             window(to_integer(cnt) - 2) <= (others => '0');
                         
@@ -150,7 +182,10 @@ begin
                     m_axis_tvalid_int <= '1';
                     m_axis_tdata  <= m_axis_tdata_int;
                     cnt <= (others => '0');
-                    
+                    if bram_addr = to_unsigned(n_rows*n_cols-1, bram_addr'length) then
+                       m_axis_tlast <= '1';
+                       
+                    end if;    
                     if m_axis_tready = '1' and m_axis_tvalid_int = '1' then
                         m_axis_tvalid_int <= '0';
                         -- advance address and coords
@@ -161,15 +196,14 @@ begin
                                 row_cnt <= row_cnt + 1;
                            
                             else
-                                col_cnt <= col_cnt + 1;
-                                m_axis_tlast <= '1';
+                                col_cnt <= col_cnt + 1;                               
                                 
                             end if;
                         else
                             conv_addr <= (others=>'0');
                             row_cnt   <= (others=>'0');
                             col_cnt   <= (others=>'0');
-                            done_conv <= '1';
+                            done_conv <= '1';                           
                             
                         end if;
                     end if;
@@ -187,7 +221,7 @@ begin
                     
                 end if;
             when RECEIVING => 
-                if cnt = to_unsigned(10, cnt'length) then 
+                if cnt = "01011" then 
                     next_state <= CONV; 
                     
                 end if;
@@ -206,3 +240,16 @@ begin
     
     
 end architecture;
+
+
+
+
+
+
+
+
+
+
+
+
+
