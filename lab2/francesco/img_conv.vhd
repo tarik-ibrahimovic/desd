@@ -43,21 +43,22 @@ architecture rtl of img_conv is
     type window_t is array (0 to 8) of std_logic_vector(6 downto 0);
     signal window    : window_t;
     
-    signal cnt        : unsigned(4 downto 0);
-
-    signal row_cnt    : unsigned(LOG2_N_ROWS-1 downto 0);
-    signal col_cnt    : unsigned(LOG2_N_COLS-1 downto 0);
+    signal cnt        : unsigned(3 downto 0);   -- 0<=cnt<=9+2 where 9 is total number of cells in conv_mat, 
+                                                -- +2 is some delay i need in order to assign conv_data to the window 
+    signal row_cnt    : unsigned(LOG2_N_ROWS-1 downto 0);  --counts the rows of the image
+    signal col_cnt    : unsigned(LOG2_N_COLS-1 downto 0);  -- count the columns of the image
     
-    type mres_t is array(0 to 8) of signed(12 downto 0);
-    signal mres, mres_reg : mres_t := (others => (others => '0'));
-    signal sum_all   : signed(14 downto 0); 
+    type mres_t is array(0 to 8) of signed(12 downto 0);   -- multiplication result, 13 bits (8+5 : 7 of window + 1 for sign, 5 for conv_mat values)
+    signal mres, mres_reg : mres_t := (others => (others => '0')); -- mres_reg: registered mres to split the convolution operation in 2 stages: 
+                                                                                                        -- (add) + (multiply and compare)
+    signal sum_all   : signed(14 downto 0);                                                 
     signal m_axis_tvalid_int : std_logic;
     signal m_axis_tdata_int : std_logic_vector(7 downto 0);
 --    signal conv_data_d : std_logic_vector;
 
     
 begin
-    -----parallel multiplier + summer
+    ----------------------------------------------parallel multiplier 
     mres(0) <= signed('0' & window(0)) * to_signed(conv_mat(0, 0), 5);
     mres(1) <= signed('0' & window(1)) * to_signed(conv_mat(0, 1), 5);
     mres(2) <= signed('0' & window(2)) * to_signed(conv_mat(0, 2), 5);
@@ -68,19 +69,19 @@ begin
     mres(7) <= signed('0' & window(7)) * to_signed(conv_mat(2, 1), 5);
     mres(8) <= signed('0' & window(8)) * to_signed(conv_mat(2, 2), 5);
     
-    process(clk) begin               --registers the multplication result
+    process(clk) begin --registers the multplication result
         if rising_edge(clk) then     
             mres_reg <= mres;
             
         end if;
     end process;
-     
+    ----------------------------------------------------------------------parallel summer 
     sum_all <= resize(mres_reg(0), 15) + resize(mres_reg(1), 15) + resize(mres_reg(2), 15)
              + resize(mres_reg(3), 15) + resize(mres_reg(4), 15) + resize(mres_reg(5), 15)
              + resize(mres_reg(6), 15) + resize(mres_reg(7), 15) + resize(mres_reg(8), 15);
              
     
- process(sum_all)--manages overflow
+ process(sum_all)--combinaroty logic that manages overflow
     begin
         if sum_all(14) = '1'  then
             m_axis_tdata_int <= x"00";
@@ -101,8 +102,9 @@ begin
         variable nr, nr_prev : integer range 0 to n_rows - 1; --row indexes  for pixels of conv_mat inside image
         variable nc, nc_prev : integer range 0 to n_cols - 1; --cols indexes  "     "   "       "      "     "
                                                               -- they map where is the desired px inside the image  
-        variable drow, dcol, drow_prev, dcol_prev : integer range -1 to 1;    
-        variable idx : integer range 0 to n_rows*n_cols-1;
+        variable drow, dcol, drow_prev, dcol_prev : integer range -1 to 1;  --row and columns distance in pixel from center of conv_mat to desired pixel:  
+        
+        variable idx : integer range 0 to n_rows*n_cols-1;  --bram adress of the desired px
     begin
         if aresetn = '0' then
             state         <= IDLE;
@@ -129,40 +131,41 @@ begin
                     
                     end if;
                 when RECEIVING =>
-                    --drow := to_integer(((cnt sll 5) + (cnt sll 3) + (cnt sll 1) + cnt) srl 7); -- drow := to_integer(cnt)/3 - 1;  --technically should not occupy a lot of resources, since 3 is constant and cnt just 5 bits
-                    if cnt <= 2 then
+                    -- this two muxes are used to select the distance in rows as a function of cnt
+                    -- cnt counts the pixels asked for convolution  
+                    if cnt <= 2 then -- if cnt is {0, 2}, we are in the first row: -1 distance from center row
                         drow := -1;
-                    elsif cnt <= 5 then
-                        drow := 0;
-                    else  -- cnt in 6..8
+                    elsif cnt <= 5 then -- center row: cnt is {3, 5}
+                        drow := 0;      -- 0 distance
+                    else  -- cnt in {6, 8}, last row, distance +1
                         drow := 1;
                     end if;
                     
-                    if cnt-2 <= 2 then
-                        drow_prev := -1;
-                    elsif cnt-2 <= 5 then
-                        drow_prev := 0;
-                    else  
-                        drow_prev := 1;
+                    if cnt-2 <= 2 then     -- same for drow_prev, but as a function of cnt-2: 
+                        drow_prev := -1;   -- -2 :needed to correctly assign conv_data to the correct window position
+                    elsif cnt-2 <= 5 then  -- since idx is assigned 2 clk cicles before conv_data arrives:
+                        drow_prev := 0;    -- variable is uptated instantly, at clk pulse i
+                    else                   -- conv_addr is committed at clock pulse i, but assigned at i+1
+                        drow_prev := 1;    -- conv_data arrives with 1 clk latency from bram, hence at i + 2
                     end if;
                                         
-                    dcol := to_integer(cnt) mod 3 - 1;
-                    dcol_prev := to_integer(cnt-2) mod 3 - 1; 
+                    dcol := to_integer(cnt) mod 3 - 1;        --mod gives back the remainder of a /3 division
+                    dcol_prev := to_integer(cnt-2) mod 3 - 1; --seems heavy as hardware, but it is implemented as a selector too
                     
-                    nr   := to_integer(row_cnt) + drow;
-                    nc   := to_integer(col_cnt) + dcol; --
+                    nr   := to_integer(row_cnt) + drow;  --actual row of the desired pixel  |
+                    nc   := to_integer(col_cnt) + dcol;  --actual column of the desired px  | => both for the pixel to ask to bram
                     
                     nr_prev   := to_integer(row_cnt) + drow_prev;
-                    nc_prev   := to_integer(col_cnt) + dcol_prev;
+                    nc_prev   := to_integer(col_cnt) + dcol_prev;  --same of before, but for the uncoming pixel from bram. note! for the uncoming px
                     
-                    if not (nr < 0 or nr > n_rows-1 or nc < 0 or nc > n_cols-1) and cnt <= to_unsigned(8, cnt'length) then
-                        idx := nr*n_cols + nc;
-                        conv_addr <= std_logic_vector(to_unsigned(idx, LOG2_N_COLS+LOG2_N_ROWS));
+                    if not (nr < 0 or nr > n_rows-1 or nc < 0 or nc > n_cols-1) and cnt <= to_unsigned(8, cnt'length) then -- this means: if desired pixel is not out of the image's borders
+                        idx := nr*n_cols + nc;             --actual adress calculation                                        i.e. if the adress exists or is coherent with the actual pixel convolution
+                        conv_addr <= std_logic_vector(to_unsigned(idx, LOG2_N_COLS+LOG2_N_ROWS));   --adress sending
                     
                     end if;                    
-                    if cnt > "00001" and cnt < "01011" then
-                        if (nr_prev < 0 or nr_prev > n_rows-1 or nc_prev < 0 or nc_prev > n_cols-1) then
-                            window(to_integer(cnt) - 2) <= (others => '0');
+                    if cnt > "00001" and cnt < "01011" then -- if con > 1 or < 11: i'm assigning conv_data to window with 2 clk cicles delay
+                        if (nr_prev < 0 or nr_prev > n_rows-1 or nc_prev < 0 or nc_prev > n_cols-1) then --same condition as before: if out of image borders or not coherent
+                            window(to_integer(cnt) - 2) <= (others => '0');                              --zero padding
                         
                         else
                             window(to_integer(cnt) - 2) <= conv_data;
