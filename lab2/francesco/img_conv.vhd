@@ -98,12 +98,6 @@ begin
                         
   process(clk, aresetn)
         -- used to manage zero padding
---        variable nr, nr_prev : signed(LOG2_N_ROWS downto 0); --row indexes  for pixels of conv_mat inside image
---        variable nc, nc_prev : signed(LOG2_N_COLS downto 0); --cols indexes  "     "   "       "      "     "
---                                                              -- they map where is the desired px inside the image  
---        variable drow, dcol, drow_prev, dcol_prev : signed(1 downto 0);     
---        variable idx : unsigned(LOG2_N_ROWS+LOG2_N_COLS-1 downto 0);
-
         variable nr, nr_prev : integer range 0 to n_rows - 1; --row indexes  for pixels of conv_mat inside image
         variable nc, nc_prev : integer range 0 to n_cols - 1; --cols indexes  "     "   "       "      "     "
                                                               -- they map where is the desired px inside the image  
