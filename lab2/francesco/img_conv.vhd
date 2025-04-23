@@ -51,7 +51,7 @@ architecture rtl of img_conv is
     type mres_t is array(0 to 8) of signed(12 downto 0);   -- multiplication result, 13 bits (8+5 : 7 of window + 1 for sign, 5 for conv_mat values)
     signal mres, mres_reg : mres_t := (others => (others => '0')); -- mres_reg: registered mres to split the convolution operation in 2 stages: 
                                                                                                         -- (add) + (multiply and compare)
-    signal sum_all   : signed(14 downto 0);                                                 
+    signal sum_all   : signed(10 downto 0);                                                 
     signal m_axis_tvalid_int : std_logic;
     signal m_axis_tdata_int : std_logic_vector(7 downto 0);
 --    signal conv_data_d : std_logic_vector;
@@ -76,17 +76,17 @@ begin
         end if;
     end process;
     ----------------------------------------------------------------------parallel summer 
-    sum_all <= resize(mres_reg(0), 15) + resize(mres_reg(1), 15) + resize(mres_reg(2), 15)
-             + resize(mres_reg(3), 15) + resize(mres_reg(4), 15) + resize(mres_reg(5), 15)
-             + resize(mres_reg(6), 15) + resize(mres_reg(7), 15) + resize(mres_reg(8), 15);
+    sum_all <= resize(mres_reg(0), 11) + resize(mres_reg(1), 11) + resize(mres_reg(2), 11)
+             + resize(mres_reg(3), 11) + resize(mres_reg(4), 11) + resize(mres_reg(5), 11)
+             + resize(mres_reg(6), 11) + resize(mres_reg(7), 11) + resize(mres_reg(8), 11);
              
     
  process(sum_all)--combinaroty logic that manages overflow
     begin
-        if sum_all(14) = '1'  then
+        if sum_all(10) = '1'  then
             m_axis_tdata_int <= x"00";
             
-        elsif sum_all(13 downto 8) /= "000000" then
+        elsif sum_all(9 downto 8) /= "00" then
             m_axis_tdata_int <= x"7F";
             
         else
