@@ -32,8 +32,8 @@ architecture rtl of img_conv is
     type conv_mat_type is array(0 to 2, 0 to 2) of integer;
     constant conv_mat : conv_mat_type := ((-1,-1,-1),(-1,8,-1),(-1,-1,-1)); 
     
-    constant n_rows : integer := 2**LOG2_N_COLS;
-    constant n_cols : integer := 2**LOG2_N_ROWS;
+    constant n_rows : integer := 2**LOG2_N_ROWS;
+    constant n_cols : integer := 2**LOG2_N_COLS;
     
     type state_t is (IDLE, RECEIVING, CONV);
     
@@ -48,13 +48,12 @@ architecture rtl of img_conv is
     signal row_cnt    : unsigned(LOG2_N_ROWS-1 downto 0);  --counts the rows of the image
     signal col_cnt    : unsigned(LOG2_N_COLS-1 downto 0);  -- count the columns of the image
     
-    type mres_t is array(0 to 8) of signed(12 downto 0);   -- multiplication result, 13 bits (8+5 : 7 of window + 1 for sign, 5 for conv_mat values)
+    type mres_t is array(0 to 8) of signed(12 downto 0);   -- multiplication result, 13 bits (8+5 : 7 of window(i) + 1 for sign, 5 for conv_mat values)
     signal mres, mres_reg : mres_t := (others => (others => '0')); -- mres_reg: registered mres to split the convolution operation in 2 stages: 
                                                                                                         -- (add) + (multiply and compare)
     signal sum_all   : signed(10 downto 0);                                                 
     signal m_axis_tvalid_int : std_logic;
     signal m_axis_tdata_int : std_logic_vector(7 downto 0);
---    signal conv_data_d : std_logic_vector;
 
     
 begin
@@ -75,7 +74,7 @@ begin
             
         end if;
     end process;
-    ----------------------------------------------------------------------parallel summer 
+    ----------------------------------------------------------------------parallel adder 
     sum_all <= resize(mres_reg(0), 11) + resize(mres_reg(1), 11) + resize(mres_reg(2), 11)
              + resize(mres_reg(3), 11) + resize(mres_reg(4), 11) + resize(mres_reg(5), 11)
              + resize(mres_reg(6), 11) + resize(mres_reg(7), 11) + resize(mres_reg(8), 11);
@@ -125,11 +124,10 @@ begin
             case state is
                 when IDLE =>
                     cnt <= (others => '0');
-                    m_axis_tlast <= '0'; 
-                    if start_conv = '1' then 
-                        done_conv <= '0';
-                    
-                    end if;
+                    m_axis_tlast <= '0';                     
+                    done_conv <= '0';
+                    conv_addr <= (others=>'0');
+                                      
                 when RECEIVING =>
                     -- this two muxes are used to select the distance in rows as a function of cnt
                     -- cnt counts the pixels asked for convolution  
@@ -171,13 +169,12 @@ begin
                             window(to_integer(cnt) - 2) <= conv_data;         --assigning conv data to the correct window cell
                                                             
                         end if;    
-                    end if;
-                    
+                    end if;                    
                     cnt <= cnt + 1;
 
                 when CONV =>
-                    m_axis_tvalid_int <= '1';              --ready to transfer
-                    m_axis_tdata  <= m_axis_tdata_int;     --loading data on the bus
+                    m_axis_tvalid_int <= '1';                   --ready to transfer
+                    m_axis_tdata  <= m_axis_tdata_int;          --loading data on the bus
                     cnt <= (others => '0');                     --resetting counter
                     if bram_addr = to_unsigned(n_rows*n_cols-1, bram_addr'length) then
                        m_axis_tlast <= '1';
@@ -207,7 +204,7 @@ begin
         end if;
     end process;
 
-    process(state, start_conv, cnt, bram_addr, m_axis_tready, m_axis_tvalid_int)  --FSM logic:
+    process(state, start_conv, cnt, bram_addr, m_axis_tready, m_axis_tvalid_int)  --FSM logic
     begin                                                       -- 3 states: IDLE: waits for start signal
         next_state <= state;                                    --           RECEIVING: sends adresses and receives data
         case state is                                           --           CONV: charges output bus with one px convolution, waits until data is transfered
