@@ -65624,12 +65624,9 @@ architecture Behavioral of img_conv_tb is
     signal start_conv: std_logic;
     signal done_conv: std_logic;
 
-    signal count_tready : unsigned(5 downto 0) := (others =>'0');
 begin
-    process (clk) begin
-        count_tready <= count_tready+1;
-    end process;
-    m_axis_tready<= '1' when count_tready = 63 else '0';
+
+    m_axis_tready<= '1';
 
     clk <= not clk after 5 ns;
 
