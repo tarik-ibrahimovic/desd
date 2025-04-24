@@ -85,7 +85,7 @@ begin
         if sum_all(10) = '1'  then
             m_axis_tdata_int <= x"00";
             
-        elsif sum_all(9 downto 8) /= "00" then
+        elsif sum_all(9 downto 7) /= "00" then
             m_axis_tdata_int <= x"7F";
             
         else
