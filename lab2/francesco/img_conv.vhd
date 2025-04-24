@@ -231,7 +231,7 @@ begin
         end if;
     end process;
 
-    process(state, start_conv, cnt, bram_addr_reg , m_axis_tvalid_int, m_axis_tready, sended)  --FSM control logic
+    process(state, start_conv, cnt, bram_addr_reg, sended)  --FSM control logic
     begin                                                       -- 3 states: IDLE: waits for start signal
         next_state <= state;                                    --           RECEIVING: sends adresses and receives data
         case state is                                           --           CONV: charges output bus with one px convolution, waits until data is transfered
