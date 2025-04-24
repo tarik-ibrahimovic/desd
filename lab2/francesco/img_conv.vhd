@@ -39,7 +39,7 @@ architecture rtl of img_conv is
     
     signal state, next_state : state_t;
                                                     
-    signal bram_addr  : unsigned(LOG2_N_COLS+LOG2_N_ROWS-1 downto 0);
+    signal bram_addr, bram_addr_reg  : unsigned(LOG2_N_COLS+LOG2_N_ROWS-1 downto 0);
     type window_t is array (0 to 8) of std_logic_vector(6 downto 0);
     signal window    : window_t;
     
@@ -51,9 +51,11 @@ architecture rtl of img_conv is
     type mres_t is array(0 to 8) of signed(12 downto 0);   -- multiplication result, 13 bits (8+5 : 7 of window(i) + 1 for sign, 5 for conv_mat values)
     signal mres, mres_reg : mres_t := (others => (others => '0')); -- mres_reg: registered mres to split the convolution operation in 2 stages: 
                                                                                                         -- (add) + (multiply and compare)
-    signal sum_all   : signed(10 downto 0);                                                 
+    signal sum_all   : signed(10 downto 0);   
+                                                  
     signal m_axis_tvalid_int : std_logic;
     signal m_axis_tdata_int : std_logic_vector(7 downto 0);
+    signal sended : std_logic;
 
     
 begin
@@ -69,8 +71,13 @@ begin
     mres(8) <= signed('0' & window(8)) * to_signed(conv_mat(2, 2), 5);
     
     process(clk) begin --registers the multplication result, to split conv operation in two stages:
-        if rising_edge(clk) then                            -- 1) multiply
-            mres_reg <= mres;                               -- 2) add and manage overflow
+        if aresetn='0' then
+            mres_reg <= (others => (others => '0'));
+            bram_addr_reg <= (others => '0');
+        
+        elsif rising_edge(clk) then                            -- 1) multiply
+            mres_reg <= mres;
+            bram_addr_reg <= bram_addr;                                  -- 2) add and manage overflow
             
         end if;
     end process;
@@ -117,6 +124,16 @@ begin
             window <= (others => (others => '0'));
             m_axis_tlast <= '0';
             done_conv <= '0';
+            sended <= '0';
+            nr       := 0;
+            nr_prev  := 0;
+            nc       := 0;
+            nc_prev  := 0;
+            drow     := 0;
+            drow_prev:= 0;
+            dcol     := 0;
+            dcol_prev:= 0;
+            idx      := 0;
             
         elsif rising_edge(clk) then
             state <= next_state;
@@ -127,6 +144,8 @@ begin
                     m_axis_tlast <= '0';                     
                     done_conv <= '0';
                     conv_addr <= (others=>'0');
+                    sended <= '0';
+                    m_axis_tvalid_int <= '0';
                                       
                 when RECEIVING =>
                     -- this two muxes are used to select the distance in rows as a function of cnt
@@ -142,7 +161,7 @@ begin
                     if cnt-2 <= 2 then     -- same for drow_prev, but as a function of cnt-2: 
                         drow_prev := -1;   -- -2 :needed to correctly assign conv_data to the correct window position
                     elsif cnt-2 <= 5 then  -- since idx is assigned 2 clk cicles before conv_data arrives:
-                        drow_prev := 0;    -- variable is uptated instantly, at clk pulse i
+                        drow_prev := 0;    -- variable is uptated instantly, at clk pulse i.
                     else                   -- conv_addr is committed at clock pulse i, but assigned at i+1
                         drow_prev := 1;    -- conv_data arrives with 1 clk latency from bram, hence at i + 2
                     end if;
@@ -171,40 +190,48 @@ begin
                         end if;    
                     end if;                    
                     cnt <= cnt + 1;
-
+                    sended <= '0';
+                    
                 when CONV =>
-                    m_axis_tvalid_int <= '1';                   --ready to transfer
-                    m_axis_tdata  <= m_axis_tdata_int;          --loading data on the bus
-                    cnt <= (others => '0');                     --resetting counter
-                    if bram_addr = to_unsigned(n_rows*n_cols-1, bram_addr'length) then
-                       m_axis_tlast <= '1';
+                    if sended = '0' then
+                        m_axis_tvalid_int <= '1';                   --ready to transfer
+                        m_axis_tdata  <= m_axis_tdata_int;          --loading data on the bus
+                        cnt <= (others => '0');
+                        if bram_addr = to_unsigned(n_rows*n_cols-1, bram_addr'length) then
+                            m_axis_tlast <= '1';
                        
-                    end if;    
-                    if m_axis_tready = '1' and m_axis_tvalid_int = '1' then   -- if data transfered
-                        m_axis_tvalid_int <= '0';                                      
-                        if bram_addr < to_unsigned(n_rows*n_cols-1, bram_addr'length) then   -- advance address and coords
-                            bram_addr <= bram_addr + 1;
-                            if col_cnt = to_unsigned(n_cols-1, col_cnt'length) then
-                                col_cnt <= (others=>'0');
-                                row_cnt <= row_cnt + 1;
-                           
-                            else
-                                col_cnt <= col_cnt + 1;                               
+                        end if;
+                    --end if;    
+                    --else
+                                                                                         
+                        if m_axis_tready = '1' and m_axis_tvalid_int = '1' then   -- if data transfered
+                            m_axis_tvalid_int <= '0';
+                            sended <= '1';
+                                                                  
+                            if bram_addr < to_unsigned(n_rows*n_cols-1, bram_addr'length) then   -- advance address and coords
+                                bram_addr <= bram_addr + 1;
+                                if col_cnt = to_unsigned(n_cols-1, col_cnt'length) then
+                                    col_cnt <= (others=>'0');
+                                    row_cnt <= row_cnt + 1;
+                               
+                                else
+                                    col_cnt <= col_cnt + 1;                               
+                                    
+                                end if;
+                            else --or reset signals when convolution ends
+                                conv_addr <= (others=>'0');
+                                row_cnt   <= (others=>'0');
+                                col_cnt   <= (others=>'0');
+                                done_conv <= '1';                           
                                 
                             end if;
-                        else --or reset signals when convolution ends
-                            conv_addr <= (others=>'0');
-                            row_cnt   <= (others=>'0');
-                            col_cnt   <= (others=>'0');
-                            done_conv <= '1';                           
-                            
                         end if;
-                    end if;
+                end if;                        
             end case;
         end if;
     end process;
 
-    process(state, start_conv, cnt, bram_addr, m_axis_tready, m_axis_tvalid_int)  --FSM logic
+    process(state, start_conv, cnt, bram_addr_reg , m_axis_tvalid_int, m_axis_tready, sended)  --FSM control logic
     begin                                                       -- 3 states: IDLE: waits for start signal
         next_state <= state;                                    --           RECEIVING: sends adresses and receives data
         case state is                                           --           CONV: charges output bus with one px convolution, waits until data is transfered
@@ -212,15 +239,21 @@ begin
                 if start_conv = '1' then -- starting convolution
                     next_state <= RECEIVING;
                     
+                else
+                    next_state <= IDLE;
+                        
                 end if;
             when RECEIVING => 
                 if cnt = "01011" then --11: 9 conv_mat cells + 2 clk pulses delay: waits for all uncoming pixels to be assigned
                     next_state <= CONV; 
-                    
+                
+                else
+                    next_state <= RECEIVING;
+                        
                 end if;
             when CONV =>
-                if m_axis_tvalid_int = '1' and m_axis_tready = '1' then      --if data transfered
-                    if bram_addr < to_unsigned(n_cols*n_rows-1, bram_addr'length) then  -- and if there are still pixels to convolv
+                if sended = '1' then      --if data transfered
+                    if bram_addr_reg < to_unsigned(n_cols*n_rows-1, bram_addr'length) then  -- and if there are still pixels to convolv
                         next_state <= RECEIVING;   --back to receiving
                         
                     else
