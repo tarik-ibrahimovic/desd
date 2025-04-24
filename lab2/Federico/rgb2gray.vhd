@@ -109,12 +109,6 @@ begin
                 m_axis_tlast_signal     <= '0';
                 flag_transmission       <= '0';
             else
-                if flag_endOfImage = '1' and not(color_selector = 0) then --error in the number of bytes
-                    m_axis_tlast_signal <= '1';
-                end if;
-                if m_axis_tlast_signal <= '1' and s_axis_tvalid = '1' and flag_endofimage = '0' then --reset of tlast in case of error in the number of bytes
-                    m_axis_tlast_signal <= '0';
-                end if;
                 if flag_division = '1' then --transmission to tdata
                     if flag_transmission = '0' or (flag_transmission = '1' and m_axis_tready = '1') then -- if previous value has been transimitted
                         m_axis_tdata        <= result_r2g;
