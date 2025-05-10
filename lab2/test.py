@@ -86,9 +86,9 @@ for i in tqdm(range(IMG_HEIGHT)):
 
 res = bytearray()
 expected_bytes = IMG_HEIGHT * IMG_WIDTH + 2
-dev.write(b'\x11')
-dev.write(b'\x11')
-dev.write(b'\x11')
+# dev.write(b'\x11')
+# dev.write(b'\x11')
+# dev.write(b'\x11')
 
 # Write the end byte
 dev.write(b'\xf1')
