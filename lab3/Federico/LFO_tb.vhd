@@ -153,6 +153,7 @@ begin
         begin
             while true loop
                 wait until( s_axis_tready = '1' and rising_edge(clk) and s_axis_tvalid = '1');
+                wait for 1 ns;
                 s_axis_tlast <= not s_axis_tlast;
             end loop;
         end process;
@@ -162,7 +163,8 @@ begin
             lfo_period <= "0000000000";
             for i in 0 to 1023 loop
                 wait until(not(m_axis_tdata_old = m_axis_tdata));
-                lfo_period <= std_logic_vector(to_unsigned(i,10));
+                wait for 1 ns;
+                lfo_period <= std_logic_vector(to_unsigned(i*10,10));
                 m_axis_tdata_old <= m_axis_tdata;
             end loop;
             wait;
