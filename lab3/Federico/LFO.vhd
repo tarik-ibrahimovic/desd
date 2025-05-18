@@ -37,7 +37,7 @@ end entity LFO;
 architecture Behavioral of LFO is
 
     constant LFO_COUNTER_BASE_PERIOD_US : integer := 1000; -- Base period of the LFO counter in us (when the joystick is at the center)
-    constant ADJUSTMENT_FACTOR : integer := 90; -- Multiplicative factor to scale the LFO period properly with the joystick y position   
+    constant ADJUSTMENT_FACTOR : integer := 1; -- Multiplicative factor to scale the LFO period properly with the joystick y position   
     constant LFO_COUNTER_LENGTH : integer :=natural(ceil(log2(real(LFO_COUNTER_BASE_PERIOD_US + (ADJUSTMENT_FACTOR * 512))))); -- number of bits necessary for lfo_period_int to not overflow
     constant clk_us : integer := natural(ceil(real(1000/CLK_PERIOD_NS))); --number of clock cycles per us (100 for T = 10ns)
     
@@ -56,6 +56,7 @@ architecture Behavioral of LFO is
     signal next_state : state_type := WAITING_DATA;
     
     signal mult_out : signed(CHANNEL_LENGHT + TRIANGULAR_COUNTER_LENGHT - 1 downto 0) := (others => '0');
+    signal mult_out_extendend : signed(CHANNEL_LENGHT + TRIANGULAR_COUNTER_LENGHT downto 0) := (others => '0');
 
 
 begin  
@@ -139,7 +140,7 @@ begin
                     if s_axis_tvalid = '1' then
                         m_axis_tlast <= s_axis_tlast; --data acquisition
                         if lfo_enable = '1' then
-						  mult_out <= to_signed( to_integer(signed(s_axis_tdata)) * to_integer(unsigned(TRIANGULAR_COUNTER)) ,CHANNEL_LENGHT + TRIANGULAR_COUNTER_LENGHT);
+						  mult_out_extendend <= signed(s_axis_tdata) * signed('0' & TRIANGULAR_COUNTER); --added 0 to triangular_counter to avoid considering it negative
 						else
 						  m_axis_tdata <= s_axis_tdata;
 						end if;
@@ -150,5 +151,7 @@ begin
             end case;
         end if;
     end process;
+    
+    mult_out <= (mult_out_extendend(mult_out_extendend'LEFT) & mult_out_extendend(CHANNEL_LENGHT + TRIANGULAR_COUNTER_LENGHT - 2 downto 0)); --resize, the bit after the sign is removed
     
 end architecture;
