@@ -27,65 +27,71 @@ entity volume_saturator is
 end volume_saturator;
 
 architecture Behavioral of volume_saturator is
-    
-    signal s_ready : std_logic;
-	signal m_valid, m_axis_valid_reg : std_logic;
-	
-	signal tdata_reg : std_logic_vector(TDATA_WIDTH-1 downto 0);
-    signal s_axis_tlast_reg : std_logic;
-    
-    signal count : integer range 0 to 1;
 
-	signal full_int	: std_logic;
-	signal empty_int : std_logic;
+    type state_type is (WAIT_D, SEND);
+    signal state, next_state : state_type;
+
+
 	
 begin
-
- process(s_axis_tdata)--combinaroty logic, manages overflow
-    begin
-        if signed(s_axis_tdata) <= HIGHER_BOUND and signed(s_axis_tdata) >= LOWER_BOUND then
-            tdata_reg <= s_axis_tdata(s_axis_tdata'left) & s_axis_tdata(TDATA_WIDTH-2 downto 0);
-            
-        elsif signed(s_axis_tdata) <= 0 then
-            tdata_reg <= std_logic_vector(to_signed(HIGHER_BOUND, TDATA_WIDTH));
-            
-        else
-             tdata_reg <= std_logic_vector(to_signed(LOWER_BOUND, TDATA_WIDTH));
-            
-        end if;
- end process;
- 
-    full_int		<= '1' when count = 1 else '0';
-	empty_int		<= '1' when count = 0 else '0';
-
-	s_axis_tready         <= not full_int;
-	m_axis_tvalid	        <= not empty_int;
-                       
     process(aclk, aresetn)
-    	variable is_writing	: std_logic;
-		variable is_reading	: std_logic;
-
+        variable tdata_temp : std_logic_vector(TDATA_WIDTH-1 + 2**(VOLUME_WIDTH-VOLUME_STEP_2-1) downto 0);
+        
     begin
-       if aresetn = '0' then
-            count <= 0;
+        if aresetn = '0' then
+            state <= WAIT_D;
                                    
-	   elsif rising_edge(aclk) then
-            m_axis_tdata <= tdata_reg; 
-            m_axis_tlast <= s_axis_tlast;          
-    
-            is_writing	:= s_axis_tvalid and not full_int; 
-            is_reading	:= m_axis_tready and not empty_int; 
+	    elsif rising_edge(aclk) then
+	        state <= next_state;
+	        
+	        case state is
+                when WAIT_D =>
+	               if s_axis_tvalid = '1' then                    -- loading data
+                         m_axis_tlast <= s_axis_tlast;
+                         --------------------------------------------------------------------------------------managing overflow
+                         if signed(s_axis_tdata) <= HIGHER_BOUND and signed(s_axis_tdata) >= LOWER_BOUND then
+                            m_axis_tdata <= s_axis_tdata(s_axis_tdata'left) & s_axis_tdata(TDATA_WIDTH-2 downto 0);
+                            
+                         else
+                            if signed(s_axis_tdata) > 0 then
+                                m_axis_tdata <= std_logic_vector(to_signed(HIGHER_BOUND, TDATA_WIDTH));
+                                
+                            else
+                                 m_axis_tdata <= std_logic_vector(to_signed(LOWER_BOUND, TDATA_WIDTH));
+                                
+                            end if;
+                        end if;                                                                                                                                                                                       
+                   end if;
+                   
+                when SEND =>      
                        
-            if is_writing = '1' and is_reading = '0' then
-                count <= count + 1;
+                end case;                   
+          end if;
+	end process; 
+                       
+    process(state, s_axis_tvalid, m_axis_tready)
+    begin
+        next_state <= state;
+        case state is
+            when WAIT_D =>
+                m_axis_tvalid <= '0';
+                s_axis_tready <= '1'; 
+               
+                if s_axis_tvalid = '1' then
+                    next_state <= SEND;
+
+                end if;
+
+            when SEND =>
+                m_axis_tvalid <= '1';
+                s_axis_tready <= '0'; 
                 
-            elsif is_writing = '0' and is_reading = '1' then
-                count <= count - 1;
-                
-            end if;
-            
-        end if;
-	end process;           
+                if m_axis_tready = '1'then
+                    next_state <= WAIT_D;
+
+                end if;
+        end case;
+    end process;     
 
  
 end Behavioral;

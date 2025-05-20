@@ -29,56 +29,76 @@ end volume_multiplier;
 
 architecture Behavioral of volume_multiplier is
 
-    signal tdata_temp, tdata_temp_reg : signed(TDATA_WIDTH-1 + 2**(VOLUME_WIDTH-VOLUME_STEP_2-1) downto 0);
-    signal fill : std_logic_vector(2**(VOLUME_WIDTH-VOLUME_STEP_2-1)-1 downto 0);
-    signal N : natural range 0 to 2**VOLUME_WIDTH-1;   
-    signal volume_reg : std_logic_vector(VOLUME_WIDTH-1 downto 0);
- --   signal N : signed(VOLUME_WIDTH-1 downto 0);
-    signal count : integer range 0 to 1;
+    type state_type is (WAIT_D, SEND);
+    signal state, next_state : state_type;
 
-	signal full_int	: std_logic;
-	signal empty_int : std_logic;
+    signal N : integer range 0 to 2**(VOLUME_WIDTH-1-VOLUME_STEP_2); --
+    signal vol_sig :  std_logic;
     
     
-begin
---espandi, shifta A MNAO
-    
-    fill            <= (others =>s_axis_tdata(TDATA_WIDTH-1));
-    tdata_temp      <= signed(fill & s_axis_tdata);
-    
-    N               <= to_integer(shift_right(signed(volume_reg), VOLUME_STEP_2));
-    m_axis_tdata    <= std_logic_vector(tdata_temp_reg sll N) when volume_reg(VOLUME_WIDTH-1) = '0' else std_logic_vector(tdata_temp_reg srl N);
-    
-    full_int		<= '1' when count = 1 else '0';
-	empty_int		<= '1' when count = 0 else '0';
-
-	s_axis_tready         <= not full_int;
-	m_axis_tvalid	      <= not empty_int;
-                       
+begin    
+           
     process(aclk, aresetn)
-    	variable is_writing	: std_logic;
-		variable is_reading	: std_logic;
-
+        variable tdata_temp : std_logic_vector(TDATA_WIDTH-1 + 2**(VOLUME_WIDTH-VOLUME_STEP_2-1) downto 0);
+        
     begin
-       if aresetn = '0' then
-            count <= 0;
+        if aresetn = '0' then
+            state <= WAIT_D;
                                    
-	   elsif rising_edge(aclk) then
-            tdata_temp_reg <= tdata_temp; 
-            m_axis_tlast <= s_axis_tlast;          
-    
-            is_writing	:= s_axis_tvalid and not full_int; 
-            is_reading	:= m_axis_tready and not empty_int; 
+	    elsif rising_edge(aclk) then
+	        state <= next_state;
+	        
+	        case state is
+                when WAIT_D =>
+	               if s_axis_tvalid = '1' then                    -- loading data
+                         m_axis_tlast <= s_axis_tlast;
+                         if s_axis_tlast = '1' then-------------------------------------------------------sampling volume
+                             N <= to_integer(abs(signed(volume)) + (2**(VOLUME_STEP_2-1)) srl VOLUME_STEP_2);        --only when righ (last) channel's data detected    
+                             vol_sig <= volume(volume'left);                                                         --for coherence: i do not want packets with differnt volume among channels 
+                                                                                                                     --also sampling volume sign to know shift direction                                                                                
+                         end if;
+                         if vol_sig = '0' then ------------------------------------------------------------positive volume
+                            tdata_temp := (others => s_axis_tdata(s_axis_tdata'left));                          -- filling with MSB
+                            tdata_temp(TDATA_WIDTH-1+N downto N) :=  s_axis_tdata;                              --left shifting: multiplication by 2**N
+                            tdata_temp(N-1 downto 0) :=  (others => '0');                                       -- manually to zero (to correctly mult. negative values)
+                            m_axis_tdata <= tdata_temp;                                                         --!!note!! result truncated (2.5 => 2)
+                            
+                        else -----------------------------------------------------------------------------negative volume
+                            tdata_temp := (others => s_axis_tdata(s_axis_tdata'left));                          -- filling with MSB  
+                            tdata_temp(TDATA_WIDTH-N-1 downto 0) :=  s_axis_tdata(TDATA_WIDTH-1 downto N);      --right shifting: division by 2**N           
+                            m_axis_tdata <= tdata_temp;                                                         --!!note!! result is rounded (2.5 => 3)
+                                       
+                        end if;
+                   end if;
+                                     
+                when SEND =>      
                        
-            if is_writing = '1' and is_reading = '0' then
-                count <= count + 1;
-                
-            elsif is_writing = '0' and is_reading = '1' then
-                count <= count - 1;
-                
-            end if;
-            
-        end if;
+                end case;                   
+          end if;
 	end process;           
+    
+    process(state, s_axis_tvalid, m_axis_tready)
+    begin
+        next_state <= state;
+        case state is
+            when WAIT_D =>
+                m_axis_tvalid <= '0';
+                s_axis_tready <= '1'; 
+               
+                if s_axis_tvalid = '1' then
+                    next_state <= SEND;
 
+                end if;
+
+            when SEND =>
+                m_axis_tvalid <= '1';
+                s_axis_tready <= '0'; 
+                
+                if m_axis_tready = '1'then
+                    next_state <= WAIT_D;
+
+                end if;
+        end case;
+    end process;
+    
 end Behavioral;
