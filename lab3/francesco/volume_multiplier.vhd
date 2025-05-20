@@ -66,8 +66,8 @@ begin
                         else -----------------------------------------------------------------------------negative volume
                             tdata_temp := (others => s_axis_tdata(s_axis_tdata'left));                          -- filling with MSB  
                             tdata_temp(TDATA_WIDTH-N-1 downto 0) :=  s_axis_tdata(TDATA_WIDTH-1 downto N);      --right shifting: division by 2**N           
-                            m_axis_tdata <= tdata_temp;                                                         --!!note!! result is rounded (2.5 => 3)
-                                       
+                            m_axis_tdata <= tdata_temp;                                                         --!!note!! if negative, result is rounded (2.5 => 3)
+                                       										-- else truncated
                         end if;
                    end if;
                                      
