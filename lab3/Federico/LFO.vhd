@@ -36,17 +36,19 @@ end entity LFO;
 
 architecture Behavioral of LFO is
 
-    constant LFO_COUNTER_BASE_PERIOD_US : integer := 1000; -- Base period of the LFO counter in us (when the joystick is at the center)
-    constant ADJUSTMENT_FACTOR : integer := 1; -- Multiplicative factor to scale the LFO period properly with the joystick y position   
-    constant LFO_COUNTER_LENGTH : integer :=natural(ceil(log2(real(LFO_COUNTER_BASE_PERIOD_US + (ADJUSTMENT_FACTOR * 512))))); -- number of bits necessary for lfo_period_int to not overflow
+    constant LFO_COUNTER_BASE_PERIOD_US : integer := 1000; -- Base period of the LFO counter in us (when the joystick is at the center)    
+    constant ADJUSTMENT_FACTOR : integer := 90; -- Multiplicative factor to scale the LFO period properly with the joystick y position   
     constant clk_us : integer := natural(ceil(real(1000/CLK_PERIOD_NS))); --number of clock cycles per us (100 for T = 10ns)
+    constant LFO_COUNTER_BASE_PERIOD : integer := LFO_COUNTER_BASE_PERIOD_US * clk_us;
+    constant LFO_COUNTER_LENGTH : integer :=natural(ceil(log2(real(LFO_COUNTER_BASE_PERIOD + (ADJUSTMENT_FACTOR * 512))))); -- number of bits necessary for lfo_period_int to not overflow
+
     
     -------------------------LFO signals--------------------------------------
     
     signal TRIANGULAR_COUNTER : unsigned(TRIANGULAR_COUNTER_LENGHT - 1 downto 0) := (others => '0'); 
+    signal TRIANGULAR_COUNTER_LEFT : unsigned(TRIANGULAR_COUNTER_LENGHT - 1 downto 0) := (others => '0'); --used to scale both stereo channels by the same amount
     signal lfo_period_internal : unsigned(LFO_COUNTER_LENGTH - 1 downto 0) := to_unsigned(LFO_COUNTER_BASE_PERIOD_US, LFO_COUNTER_LENGTH);
-    signal counter_us : unsigned(LFO_COUNTER_LENGTH - 1 downto 0) := (others => '0');
-    signal counter_clk_cycles : unsigned(natural(ceil(log2(real(clk_us)))) - 1 downto 0) := (others => '0'); 
+    signal counter_clk_cycles : unsigned(LFO_COUNTER_LENGTH - 1 downto 0) := (others => '0'); 
 
     
     signal lfo_direction : std_logic := '0'; -- '0' = up   '1' = down
@@ -65,33 +67,23 @@ begin
     begin
         if aresetn = '0' then
             TRIANGULAR_COUNTER <= (others => '0');
-            counter_us <= (others => '0');
-            counter_clk_cycles <= (others => '0');
-            lfo_period_internal <= to_unsigned(LFO_COUNTER_BASE_PERIOD_US, LFO_COUNTER_LENGTH); 
+            counter_clk_cycles <= to_unsigned(1, LFO_COUNTER_LENGTH);
+            lfo_period_internal <= to_unsigned(LFO_COUNTER_BASE_PERIOD, LFO_COUNTER_LENGTH); 
             lfo_direction <= '0';
         elsif rising_edge(aclk) then
-            if counter_clk_cycles < clk_us - 1 then
+            if counter_clk_cycles < lfo_period_internal then
                 counter_clk_cycles <= counter_clk_cycles + 1;
             else
-                counter_clk_cycles <= (others => '0');
-                if counter_us < lfo_period_internal then
-                    counter_us <= counter_us + 1;
+                counter_clk_cycles <= to_unsigned(1, LFO_COUNTER_LENGTH);
+                if lfo_direction = '0' then
+                    TRIANGULAR_COUNTER <= TRIANGULAR_COUNTER + 1;
                 else
-                    counter_us <= (others => '0');
-                    if lfo_direction = '0' then
-                        TRIANGULAR_COUNTER <= TRIANGULAR_COUNTER + 1;
-                    else
-                        TRIANGULAR_COUNTER <= TRIANGULAR_COUNTER - 1;
-                    end if;
-                    if (TRIANGULAR_COUNTER = 1 and lfo_direction = '1') or  (TRIANGULAR_COUNTER = (2**TRIANGULAR_COUNTER_LENGHT) - 2 and lfo_direction = '0') then
-                        lfo_direction <= not(lfo_direction);
-                    end if;
-                    if LFO_COUNTER_BASE_PERIOD_US > (ADJUSTMENT_FACTOR * TO_INTEGER(signed(lfo_period))) then
-                        lfo_period_internal <= to_unsigned(LFO_COUNTER_BASE_PERIOD_US - (ADJUSTMENT_FACTOR * TO_INTEGER(signed(lfo_period))), LFO_COUNTER_LENGTH);
-                    else
-                        lfo_period_internal <= to_unsigned( 0 , LFO_COUNTER_LENGTH);
-                    end if;
+                    TRIANGULAR_COUNTER <= TRIANGULAR_COUNTER - 1;
                 end if;
+                if (TRIANGULAR_COUNTER = 1 and lfo_direction = '1') or  (TRIANGULAR_COUNTER = (2**TRIANGULAR_COUNTER_LENGHT) - 2 and lfo_direction = '0') then
+                    lfo_direction <= not(lfo_direction);
+                end if;
+                lfo_period_internal <= to_unsigned(LFO_COUNTER_BASE_PERIOD - (ADJUSTMENT_FACTOR * TO_INTEGER(signed(lfo_period))), LFO_COUNTER_LENGTH);
             end if;
         end if;
     end process;
@@ -107,6 +99,9 @@ begin
                 if s_axis_tvalid = '1' then --data acquired at the end of the clock cycle
                     if lfo_enable = '1' then
                         next_state <= MULTIPLICATION;
+                        if s_axis_tlast = '0' then
+                            TRIANGULAR_COUNTER_LEFT <= TRIANGULAR_COUNTER; --updated only on the left channel to have coherent counter
+						end if;
                     else
                         next_state <= TRANSMISSION;
                     end if;
@@ -124,6 +119,7 @@ begin
             when others => --RESET
                 s_axis_tready <= '0';
                 m_axis_tvalid <= '0';
+                TRIANGULAR_COUNTER_LEFT <= TRIANGULAR_COUNTER;
                 next_state <= WAITING_DATA;
         end case;
     end process;
@@ -137,10 +133,10 @@ begin
             
             case state is
                 when WAITING_DATA =>
-                    if s_axis_tvalid = '1' then
-                        m_axis_tlast <= s_axis_tlast; --data acquisition
+                    if s_axis_tvalid = '1' then --data acquisition
+                        m_axis_tlast <= s_axis_tlast; 
                         if lfo_enable = '1' then
-						  mult_out_extendend <= signed(s_axis_tdata) * signed('0' & TRIANGULAR_COUNTER); --added 0 to triangular_counter to avoid considering it negative
+						  mult_out_extendend <= signed(s_axis_tdata) * signed('0' & TRIANGULAR_COUNTER_LEFT); --added 0 to triangular_counter to avoid considering it negative
 						else
 						  m_axis_tdata <= s_axis_tdata;
 						end if;
