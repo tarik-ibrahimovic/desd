@@ -35,67 +35,89 @@ architecture Behavioral of moving_average_filter is
     subtype sample_t is signed(TDATA_WIDTH-1 downto 0);
     type shift_array_t is array(0 to 31) of sample_t;
 
-    signal shift_reg  : shift_array_t := (others => (others => '0'));
-    signal sum        : signed(SUM_WIDTH downto 0) := (others => '0');
-    signal avg        : sample_t := (others => '0');
-    signal data_valid : std_logic := '0';
-    signal tlast_reg  : std_logic := '0';
-    signal s_ready    : std_logic;
+    signal shift_reg    : shift_array_t := (others => (others => '0'));
+    signal sum_stage1   : signed(SUM_WIDTH downto 0) := (others => '0');
+    signal sum_stage2   : signed(SUM_WIDTH downto 0) := (others => '0');
+    signal avg_stage1   : sample_t := (others => '0');
+    signal avg_stage2   : sample_t := (others => '0');
+
+    signal valid_stage1 : std_logic := '0';
+    signal valid_stage2 : std_logic := '0';
+
+    signal tlast_stage1 : std_logic := '0';
+    signal tlast_stage2 : std_logic := '0';
+
+    signal s_ready      : std_logic;
 
 begin
 
     -- Handshake
-    s_ready <= '1' when (m_axis_tready = '1' or data_valid = '0') else '0';
+    s_ready <= '1' when (valid_stage2 = '0' or m_axis_tready = '1') else '0';
     s_axis_tready <= s_ready;
 
     process(aclk)
         variable new_sample : sample_t;
         variable old_sample : sample_t;
+        variable temp_sum   : signed(SUM_WIDTH downto 0);
         variable temp_avg   : sample_t;
     begin
         if rising_edge(aclk) then
             if aresetn = '0' then
-                shift_reg  <= (others => (others => '0'));
-                sum        <= (others => '0');
-                avg        <= (others => '0');
-                data_valid <= '0';
-                tlast_reg  <= '0';
+                shift_reg      <= (others => (others => '0'));
+                sum_stage1     <= (others => '0');
+                sum_stage2     <= (others => '0');
+                avg_stage1     <= (others => '0');
+                avg_stage2     <= (others => '0');
+                valid_stage1   <= '0';
+                valid_stage2   <= '0';
+                tlast_stage1   <= '0';
+                tlast_stage2   <= '0';
             else
+                -- Stage 1: Acquisizione e aggiornamento registro e somma
                 if s_axis_tvalid = '1' and s_ready = '1' then
                     new_sample := signed(s_axis_tdata);
                     old_sample := shift_reg(FILTER_LEN - 1);
 
-                    -- Shift register update
+                    -- Shift Register
                     for i in FILTER_LEN-1 downto 1 loop
                         shift_reg(i) <= shift_reg(i-1);
                     end loop;
                     shift_reg(0) <= new_sample;
 
-                    -- Update sum
-                    sum <= sum - resize(old_sample, sum'length) + resize(new_sample, sum'length);
+                    -- Aggiornamento somma
+                    temp_sum := sum_stage2 - resize(old_sample, sum_stage2'length) + resize(new_sample, sum_stage2'length);
+                    sum_stage1 <= temp_sum;
 
-                    -- Compute or bypass
+                    -- Calcolo media o bypass
                     if enable_filter = '1' then
-                        temp_avg := resize(sum(SUM_WIDTH downto FILTER_ORDER_POWER), TDATA_WIDTH);
-                        avg <= temp_avg;
+                        temp_avg := resize(temp_sum(SUM_WIDTH downto FILTER_ORDER_POWER), TDATA_WIDTH);
+                        avg_stage1 <= temp_avg;
                     else
-                        avg <= new_sample;
+                        avg_stage1 <= new_sample;
                     end if;
 
-                    -- Set output valid
-                    data_valid <= '1';
-                    tlast_reg  <= s_axis_tlast;
+                    valid_stage1 <= '1';
+                    tlast_stage1 <= s_axis_tlast;
+                else
+                    valid_stage1 <= '0';
+                end if;
 
-                elsif data_valid = '1' and m_axis_tready = '1' then
-                    data_valid <= '0';
+                -- Stage 2: Registrazione uscita
+                if valid_stage1 = '1' then
+                    sum_stage2   <= sum_stage1;
+                    avg_stage2   <= avg_stage1;
+                    valid_stage2 <= '1';
+                    tlast_stage2 <= tlast_stage1;
+                elsif m_axis_tready = '1' then
+                    valid_stage2 <= '0';
                 end if;
             end if;
         end if;
     end process;
 
-    -- Outputs
-    m_axis_tvalid <= data_valid;
-    m_axis_tdata  <= std_logic_vector(avg);
-    m_axis_tlast  <= tlast_reg;
+    -- Output AXI Stream
+    m_axis_tvalid <= valid_stage2;
+    m_axis_tdata  <= std_logic_vector(avg_stage2);
+    m_axis_tlast  <= tlast_stage2;
 
 end Behavioral;
