@@ -6,7 +6,7 @@ entity balance_controller is
 	generic (
 		TDATA_WIDTH		: positive := 24;
 		BALANCE_WIDTH	: positive := 10;
-		BALANCE_STEP_2	: positive := 6		-- i.e., balance_values_per_step = 2**VOLUME_STEP_2
+		BALANCE_STEP_2	: positive := 8		-- i.e., balance_values_per_step = 2**VOLUME_STEP_2
 	);
 	Port (
 		aclk			: in std_logic;
@@ -39,11 +39,8 @@ begin
    balance_internal  <= balance;
    balance_internal_signed   <= signed(balance) - 512;
    balance_internal_unsigned <= unsigned(balance_internal_signed);
-   N <= to_integer(
-        (unsigned(balance_internal) + to_unsigned(2**(BALANCE_WIDTH-1), BALANCE_WIDTH))
-        srl BALANCE_STEP_2
-     );
-   balance_sign <= balance_internal_signed(balance_internal'left);
+   N <= to_integer(shift_right(unsigned(balance_internal_unsigned), BALANCE_STEP_2)); --  + to_unsigned(2**(BALANCE_WIDTH-1), BALANCE_WIDTH)
+   balance_sign <= balance_internal_signed(balance_internal_signed'left);
    selector <= balance_sign & s_axis_tlast;    
    s_axis_tready <= '1' when (busy = '1' and m_axis_tready = '1') or busy ='0' else '0';
    m_axis_tvalid <= m_axis_tvalid_internal;
@@ -66,18 +63,14 @@ begin
                m_axis_tvalid_internal <= '1';
                busy <= '1';
                case selector is
-                  when "00" => --left channel to be decreased
-                     tdata_temp := (others => s_axis_tdata(s_axis_tdata'left));                          -- filling with MSB  
-                     tdata_temp(TDATA_WIDTH-N-1 downto 0) :=  s_axis_tdata(TDATA_WIDTH-1 downto N);      --right shifting: division by 2**N           
-                     m_axis_tdata <= tdata_temp;                               
+                  when "00" => --left channel to be decreased                          
+                     m_axis_tdata <= std_logic_vector(shift_right(signed(s_axis_tdata),N));
                   when "01" => --right channel intact
                      m_axis_tdata  <= s_axis_tdata;
                   when "10" => --left channel intact
                      m_axis_tdata  <= s_axis_tdata;
                   when "11" => -- right channel to be decreased
-                     tdata_temp := (others => s_axis_tdata(s_axis_tdata'left));                          -- filling with MSB  
-                     tdata_temp(TDATA_WIDTH-N-1 downto 0) :=  s_axis_tdata(TDATA_WIDTH-1 downto N);      --right shifting: division by 2**N           
-                     m_axis_tdata <= tdata_temp;       
+                     m_axis_tdata <= std_logic_vector(shift_right(signed(s_axis_tdata),N));
                   when others =>                     
                   end case;
             end if;
