@@ -48,9 +48,8 @@ architecture Behavioral of LFO is
     signal TRIANGULAR_COUNTER : unsigned(TRIANGULAR_COUNTER_LENGHT - 1 downto 0) := (others => '0'); 
     signal TRIANGULAR_COUNTER_LEFT : unsigned(TRIANGULAR_COUNTER_LENGHT - 1 downto 0) := (others => '0'); --used to scale both stereo channels by the same amount
     signal lfo_period_internal : unsigned(LFO_COUNTER_LENGTH - 1 downto 0) := to_unsigned(LFO_COUNTER_BASE_PERIOD_US, LFO_COUNTER_LENGTH);
-    signal lfo_period_temp : signed(LFO_COUNTER_LENGTH downto 0) := to_signed(LFO_COUNTER_BASE_PERIOD_US, LFO_COUNTER_LENGTH + 1);    --1 extra bit for sign
     signal counter_clk_cycles : unsigned(LFO_COUNTER_LENGTH - 1 downto 0) := (others => '0'); 
-    signal lfo_period_flag : std_logic := '0';
+
     
     signal lfo_direction : std_logic := '0'; -- '0' = up   '1' = down
     
@@ -62,7 +61,6 @@ architecture Behavioral of LFO is
     signal mult_out_extendend : signed(CHANNEL_LENGHT + TRIANGULAR_COUNTER_LENGHT downto 0) := (others => '0');
 
 
-
 begin  
 
     LFO_generator: process(aclk, aresetn)
@@ -71,14 +69,8 @@ begin
             TRIANGULAR_COUNTER <= (others => '0');
             counter_clk_cycles <= to_unsigned(1, LFO_COUNTER_LENGTH);
             lfo_period_internal <= to_unsigned(LFO_COUNTER_BASE_PERIOD, LFO_COUNTER_LENGTH); 
-            lfo_period_temp <= to_signed(LFO_COUNTER_BASE_PERIOD, LFO_COUNTER_LENGTH + 1); 
             lfo_direction <= '0';
-            lfo_period_flag <= '0';
         elsif rising_edge(aclk) then
-            if lfo_period_flag = '1' then
-                lfo_period_internal <= to_unsigned(LFO_COUNTER_BASE_PERIOD - TO_INTEGER(signed(lfo_period_temp)), LFO_COUNTER_LENGTH);
-            end if;
-            lfo_period_flag <= '0';
             if counter_clk_cycles < lfo_period_internal then
                 counter_clk_cycles <= counter_clk_cycles + 1;
             else
@@ -91,8 +83,7 @@ begin
                 if (TRIANGULAR_COUNTER = 1 and lfo_direction = '1') or  (TRIANGULAR_COUNTER = (2**TRIANGULAR_COUNTER_LENGHT) - 2 and lfo_direction = '0') then
                     lfo_direction <= not(lfo_direction);
                 end if;
-                lfo_period_temp <= to_signed(ADJUSTMENT_FACTOR * TO_INTEGER(signed(lfo_period)), LFO_COUNTER_LENGTH + 1);
-                lfo_period_flag <= '1';
+                lfo_period_internal <= to_unsigned(LFO_COUNTER_BASE_PERIOD - (ADJUSTMENT_FACTOR * TO_INTEGER(signed(lfo_period))), LFO_COUNTER_LENGTH);
             end if;
         end if;
     end process;
