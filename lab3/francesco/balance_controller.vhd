@@ -27,74 +27,61 @@ entity balance_controller is
 end balance_controller;
 
 architecture Behavioral of balance_controller is
-
-    type state_type is (WAIT_D, SEND);
-    signal state, next_state : state_type;
-    
-    signal N : natural range 0 to 2**(BALANCE_WIDTH-1-BALANCE_STEP_2);   
-    signal bal_sig : std_logic;
-
+   signal busy : std_logic;
+   signal m_axis_tvalid_internal : std_logic;
+   signal balance_internal : std_logic_vector(BALANCE_WIDTH-1 downto 0);
+   signal balance_internal_signed : signed(BALANCE_WIDTH-1 downto 0);
+   signal balance_internal_unsigned : unsigned(BALANCE_WIDTH-1 downto 0);
+   signal N : natural;
+   signal selector : std_logic_vector(1 downto 0);
+   signal balance_sign : std_logic;
 begin
-    
-    process(aclk, aresetn)
-        variable tdata_temp : std_logic_vector(TDATA_WIDTH-1 downto 0);
-                
-    begin
-        if aresetn = '0' then
-            state <= WAIT_D;
-                                   
-        elsif rising_edge(aclk) then
-            state <= next_state;
-            
-            case state is
-                when WAIT_D =>
-                   if s_axis_tvalid = '1' then                    -- loading data
-                         m_axis_tlast <= s_axis_tlast;
-                         if s_axis_tlast = '1' then
-                            N <= to_integer(abs(signed(balance)) + (2**(BALANCE_STEP_2-1)) srl BALANCE_STEP_2);       
-                            bal_sig <= balance(balance'left);                                                         
-                                                                                                                                               
-                         end if;
-                         
-                         if bal_sig = s_axis_tlast then----------------------------------------------------------- downshifting correct channel
-                            tdata_temp := (others => s_axis_tdata(s_axis_tdata'left));                          -- filling with MSB  
-                            tdata_temp(TDATA_WIDTH-N-1 downto 0) :=  s_axis_tdata(TDATA_WIDTH-1 downto N);      --right shifting: division by 2**N           
-                            m_axis_tdata <= tdata_temp;                                                         --!!note!! if negative, result is rounded (2.5 => 3)
-                             											-- else is truncated
-                         else
-                            m_axis_tdata <= s_axis_tdata;
-                            
-                         end if;      
-                   end if;
-                                     
-                when SEND =>      
-                       
-                end case;                   
-          end if;
-    end process;           
-    
-    process(state, s_axis_tvalid, m_axis_tready)
-    begin
-        next_state <= state;
-        case state is
-            when WAIT_D =>
-                m_axis_tvalid <= '0';
-                s_axis_tready <= '1'; 
-               
-                if s_axis_tvalid = '1' then
-                    next_state <= SEND;
-    
-                end if;
-    
-            when SEND =>
-                m_axis_tvalid <= '1';
-                s_axis_tready <= '0'; 
-                
-                if m_axis_tready = '1'then
-                    next_state <= WAIT_D;
-    
-                end if;
-        end case;
-    end process;
-    
+   balance_internal  <= balance;
+   balance_internal_signed   <= signed(balance) - 512;
+   balance_internal_unsigned <= unsigned(balance_internal_signed);
+   N <= to_integer(
+        (unsigned(balance_internal) + to_unsigned(2**(BALANCE_WIDTH-1), BALANCE_WIDTH))
+        srl BALANCE_STEP_2
+     );
+   balance_sign <= balance_internal_signed(balance_internal'left);
+   selector <= balance_sign & s_axis_tlast;    
+   s_axis_tready <= '1' when (busy = '1' and m_axis_tready = '1') or busy ='0' else '0';
+   m_axis_tvalid <= m_axis_tvalid_internal;
+   
+   process(aclk)
+      variable tdata_temp : std_logic_vector(TDATA_WIDTH-1 downto 0); 
+   begin      
+      if rising_edge(aclk) then
+         if aresetn = '0' then
+            busy <= '0';
+            m_axis_tvalid_internal <= '0';
+         else
+            if busy = '1' and m_axis_tready = '1' then
+               m_axis_tvalid_internal <= '0';
+               busy <= '0';
+            end if;
+
+            if s_axis_tvalid = '1' and (busy = '0' or m_axis_tready = '1') then
+               m_axis_tlast  <= s_axis_tlast;
+               m_axis_tvalid_internal <= '1';
+               busy <= '1';
+               case selector is
+                  when "00" => --left channel to be decreased
+                     tdata_temp := (others => s_axis_tdata(s_axis_tdata'left));                          -- filling with MSB  
+                     tdata_temp(TDATA_WIDTH-N-1 downto 0) :=  s_axis_tdata(TDATA_WIDTH-1 downto N);      --right shifting: division by 2**N           
+                     m_axis_tdata <= tdata_temp;                               
+                  when "01" => --right channel intact
+                     m_axis_tdata  <= s_axis_tdata;
+                  when "10" => --left channel intact
+                     m_axis_tdata  <= s_axis_tdata;
+                  when "11" => -- right channel to be decreased
+                     tdata_temp := (others => s_axis_tdata(s_axis_tdata'left));                          -- filling with MSB  
+                     tdata_temp(TDATA_WIDTH-N-1 downto 0) :=  s_axis_tdata(TDATA_WIDTH-1 downto N);      --right shifting: division by 2**N           
+                     m_axis_tdata <= tdata_temp;       
+                  when others =>                     
+                  end case;
+            end if;
+         end if;
+      end if;
+   end process;
 end Behavioral;
