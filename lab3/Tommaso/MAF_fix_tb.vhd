@@ -1,3 +1,4 @@
+
 library IEEE;
 use IEEE.STD_LOGIC_1164.ALL;
 use IEEE.NUMERIC_STD.ALL;
@@ -14,19 +15,17 @@ architecture Behavioral of tb_moving_average_filter is
     signal clk            : std_logic := '0';
     signal rst_n          : std_logic := '0';
 
-    -- AXI input
     signal s_axis_tvalid  : std_logic := '0';
     signal s_axis_tdata   : std_logic_vector(TDATA_WIDTH-1 downto 0) := (others => '0');
     signal s_axis_tlast   : std_logic := '0';
     signal s_axis_tready  : std_logic;
 
-    -- AXI output
     signal m_axis_tvalid  : std_logic;
     signal m_axis_tdata   : std_logic_vector(TDATA_WIDTH-1 downto 0);
     signal m_axis_tlast   : std_logic;
     signal m_axis_tready  : std_logic := '1';
 
-    signal enable_filter : std_logic := '0';
+    signal enable_filter  : std_logic := '0';
 
     component moving_average_filter
         generic (
@@ -48,7 +47,6 @@ architecture Behavioral of tb_moving_average_filter is
         );
     end component;
 
-    -- Procedura per inviare un campione
     procedure send_sample(
         signal data  : out std_logic_vector;
         signal valid : out std_logic;
@@ -59,12 +57,20 @@ architecture Behavioral of tb_moving_average_filter is
         signal clk   : in std_logic
     ) is
     begin
-        data  <= std_logic_vector(to_signed(value, TDATA_WIDTH));
+        data  <= std_logic_vector(to_signed(value, data'length));
         valid <= '1';
         last  <= is_last;
         wait until rising_edge(clk);
-        while ready = '0' loop wait until rising_edge(clk); end loop;
+
+        -- Mantieni VALID finché non è accettato
+        while ready = '0' loop
+            wait until rising_edge(clk);
+        end loop;
+
+        wait until rising_edge(clk); -- garantisce almeno un ciclo di handshake
+
         valid <= '0';
+        last  <= '0';
         wait for CLK_PERIOD;
     end procedure;
 
@@ -81,7 +87,7 @@ begin
         end loop;
     end process;
 
-    -- DUT instantiation
+    -- DUT
     DUT: moving_average_filter
         generic map (
             FILTER_ORDER_POWER => FILTER_ORDER_POWER,
@@ -101,11 +107,9 @@ begin
             enable_filter  => enable_filter
         );
 
-    -- Stimolo
+    -- Stimulus
     stimulus: process
-        variable i : integer;
     begin
-        -- Reset
         rst_n <= '0';
         wait for 20 ns;
         rst_n <= '1';
@@ -115,8 +119,8 @@ begin
         enable_filter <= '0';
 
         for i in 0 to 3 loop
-            send_sample(s_axis_tdata, s_axis_tvalid, s_axis_tlast, s_axis_tready, i,       '0', clk);  -- LEFT
-            send_sample(s_axis_tdata, s_axis_tvalid, s_axis_tlast, s_axis_tready, i + 100, '1', clk);  -- RIGHT
+            send_sample(s_axis_tdata, s_axis_tvalid, s_axis_tlast, s_axis_tready, i,       '0', clk); -- LEFT
+            send_sample(s_axis_tdata, s_axis_tvalid, s_axis_tlast, s_axis_tready, i + 100, '1', clk); -- RIGHT
         end loop;
 
         wait for 50 ns;
@@ -125,8 +129,8 @@ begin
         enable_filter <= '1';
 
         for i in 4 to 7 loop
-            send_sample(s_axis_tdata, s_axis_tvalid, s_axis_tlast, s_axis_tready, i,       '0', clk);  -- LEFT
-            send_sample(s_axis_tdata, s_axis_tvalid, s_axis_tlast, s_axis_tready, i + 100, '1', clk);  -- RIGHT
+            send_sample(s_axis_tdata, s_axis_tvalid, s_axis_tlast, s_axis_tready, i,       '0', clk); -- LEFT
+            send_sample(s_axis_tdata, s_axis_tvalid, s_axis_tlast, s_axis_tready, i + 100, '1', clk); -- RIGHT
         end loop;
 
         wait for 200 ns;
@@ -134,7 +138,7 @@ begin
         report "Fine simulazione." severity failure;
     end process;
 
-    -- Monitor output
+    -- Monitor
     monitor: process(clk)
     begin
         if rising_edge(clk) then
