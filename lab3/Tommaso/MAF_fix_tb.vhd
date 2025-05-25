@@ -1,101 +1,71 @@
-
-library IEEE;
-use IEEE.STD_LOGIC_1164.ALL;
-use IEEE.NUMERIC_STD.ALL;
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
 
 entity tb_moving_average_filter is
 end tb_moving_average_filter;
 
-architecture Behavioral of tb_moving_average_filter is
+architecture sim of tb_moving_average_filter is
 
-    constant TDATA_WIDTH        : integer := 24;
+    constant CLK_PERIOD : time := 5.52 ns; -- ~181 MHz
+    constant TDATA_WIDTH : integer := 24;
     constant FILTER_ORDER_POWER : integer := 5;
-    constant CLK_PERIOD         : time := 6.94 ns;
+    constant FILTER_LEN : integer := 2 ** FILTER_ORDER_POWER;
 
-    signal clk            : std_logic := '0';
-    signal rst_n          : std_logic := '0';
-
+    signal aclk           : std_logic := '0';
+    signal aresetn        : std_logic := '0';
     signal s_axis_tvalid  : std_logic := '0';
     signal s_axis_tdata   : std_logic_vector(TDATA_WIDTH-1 downto 0) := (others => '0');
     signal s_axis_tlast   : std_logic := '0';
     signal s_axis_tready  : std_logic;
-
     signal m_axis_tvalid  : std_logic;
     signal m_axis_tdata   : std_logic_vector(TDATA_WIDTH-1 downto 0);
     signal m_axis_tlast   : std_logic;
     signal m_axis_tready  : std_logic := '1';
-
     signal enable_filter  : std_logic := '0';
 
-    component moving_average_filter
+    component moving_average_filter is
         generic (
             FILTER_ORDER_POWER : integer := 5;
             TDATA_WIDTH        : positive := 24
         );
         port (
-            aclk           : in std_logic;
-            aresetn        : in std_logic;
-            s_axis_tvalid  : in std_logic;
-            s_axis_tdata   : in std_logic_vector(TDATA_WIDTH-1 downto 0);
-            s_axis_tlast   : in std_logic;
+            aclk           : in  std_logic;
+            aresetn        : in  std_logic;
+            s_axis_tvalid  : in  std_logic;
+            s_axis_tdata   : in  std_logic_vector(TDATA_WIDTH-1 downto 0);
+            s_axis_tlast   : in  std_logic;
             s_axis_tready  : out std_logic;
             m_axis_tvalid  : out std_logic;
             m_axis_tdata   : out std_logic_vector(TDATA_WIDTH-1 downto 0);
             m_axis_tlast   : out std_logic;
-            m_axis_tready  : in std_logic;
-            enable_filter  : in std_logic
+            m_axis_tready  : in  std_logic;
+            enable_filter  : in  std_logic
         );
     end component;
-
-    procedure send_sample(
-        signal data  : out std_logic_vector;
-        signal valid : out std_logic;
-        signal last  : out std_logic;
-        signal ready : in  std_logic;
-        value        : in integer;
-        is_last      : in std_logic;
-        signal clk   : in std_logic
-    ) is
-    begin
-        data  <= std_logic_vector(to_signed(value, data'length));
-        valid <= '1';
-        last  <= is_last;
-        wait until rising_edge(clk);
-
-        -- Mantieni VALID finché non è accettato
-        while ready = '0' loop
-            wait until rising_edge(clk);
-        end loop;
-
-        wait until rising_edge(clk); -- garantisce almeno un ciclo di handshake
-
-        valid <= '0';
-        last  <= '0';
-        wait for CLK_PERIOD;
-    end procedure;
 
 begin
 
     -- Clock generation
-    clk_process : process
+    clk_gen : process
     begin
         while true loop
-            clk <= '0';
-            wait for CLK_PERIOD / 2;
-            clk <= '1';
-            wait for CLK_PERIOD / 2;
+            aclk <= '0';
+            wait for CLK_PERIOD/2;
+            aclk <= '1';
+            wait for CLK_PERIOD/2;
         end loop;
     end process;
 
-    -- DUT
-    DUT: moving_average_filter
+    -- DUT instantiation
+    dut: moving_average_filter
         generic map (
             FILTER_ORDER_POWER => FILTER_ORDER_POWER,
-            TDATA_WIDTH        => TDATA_WIDTH
+            TDATA_WIDTH => TDATA_WIDTH
         )
         port map (
-            aclk           => clk,
-            aresetn        => rst_n,
+            aclk           => aclk,
+            aresetn        => aresetn,
             s_axis_tvalid  => s_axis_tvalid,
             s_axis_tdata   => s_axis_tdata,
             s_axis_tlast   => s_axis_tlast,
@@ -107,46 +77,72 @@ begin
             enable_filter  => enable_filter
         );
 
-    -- Stimulus
-    stimulus: process
+    -- Stimuli process
+    stim_proc : process
+        procedure send_packet(val : integer) is
+            variable v : signed(TDATA_WIDTH-1 downto 0);
+        begin
+            -- Send left channel sample
+            v := to_signed(val, TDATA_WIDTH);
+            s_axis_tdata  <= std_logic_vector(v);
+            s_axis_tlast  <= '0';
+            s_axis_tvalid <= '1';
+            wait until rising_edge(aclk) and s_axis_tready = '1';
+
+            -- Send right channel sample
+            s_axis_tdata  <= std_logic_vector(v);
+            s_axis_tlast  <= '1';
+            -- Keep tvalid high during right channel also
+            wait until rising_edge(aclk) and s_axis_tready = '1';
+
+            -- After sending both samples, disable tvalid
+            s_axis_tvalid <= '0';
+            s_axis_tlast  <= '0';  -- clear tlast for safety
+            s_axis_tdata  <= (others => '0');
+
+            -- Small gap between packets to let DUT process
+            wait for CLK_PERIOD * 2;
+        end procedure;
+
+        -- Input sample values
+        type int_array is array (0 to 63) of integer;
+        constant values : int_array := (
+            0, 1, 2, 3, 4, 5, 6, 7,
+            8, 9, 10, 11, 12, 13, 14, 15,
+            16, 17, 18, 19, 20, 21, 22, 23,
+            24, 25, 26, 27, 28, 29, 30, 31,
+            32, 33, 34, 35, 36, 37, 38, 39,
+            40, 41, 42, 43, 44, 45, 46, 47,
+            48, 49, 50, 51, 52, 53, 54, 55,
+            56, 57, 58, 59, 60, 61, 62, 63
+        );
+
     begin
-        rst_n <= '0';
+        -- Reset pulse
+        aresetn <= '0';
         wait for 20 ns;
-        rst_n <= '1';
-        wait for 20 ns;
+        aresetn <= '1';
+        wait for 2 * CLK_PERIOD;
 
-        report "Invio 4 coppie L/R (bypass)";
+        report "Sending with enable_filter = 0 (pass-through)";
         enable_filter <= '0';
-
-        for i in 0 to 3 loop
-            send_sample(s_axis_tdata, s_axis_tvalid, s_axis_tlast, s_axis_tready, i,       '0', clk); -- LEFT
-            send_sample(s_axis_tdata, s_axis_tvalid, s_axis_tlast, s_axis_tready, i + 100, '1', clk); -- RIGHT
-        end loop;
-
-        wait for 50 ns;
-
-        report "Invio 4 coppie L/R (filtro attivo)";
-        enable_filter <= '1';
-
-        for i in 4 to 7 loop
-            send_sample(s_axis_tdata, s_axis_tvalid, s_axis_tlast, s_axis_tready, i,       '0', clk); -- LEFT
-            send_sample(s_axis_tdata, s_axis_tvalid, s_axis_tlast, s_axis_tready, i + 100, '1', clk); -- RIGHT
+        for i in 0 to 63 loop
+            send_packet(values(i));
         end loop;
 
         wait for 200 ns;
 
-        report "Fine simulazione." severity failure;
+        report "Sending with enable_filter = 1 (filter active)";
+        enable_filter <= '1';
+        for i in 0 to 63 loop
+            send_packet(values(i));
+        end loop;
+
+        wait for 4000 ns;
+        report "Simulation finished";
+        wait;  -- keep simulation running
+
     end process;
 
-    -- Monitor
-    monitor: process(clk)
-    begin
-        if rising_edge(clk) then
-            if m_axis_tvalid = '1' then
-                report "OUT = " & integer'image(to_integer(signed(m_axis_tdata))) &
-                       " | LAST = " & std_logic'image(m_axis_tlast);
-            end if;
-        end if;
-    end process;
-
-end Behavioral;
+end sim;
+ 
