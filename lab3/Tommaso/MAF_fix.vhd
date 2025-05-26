@@ -19,7 +19,7 @@ entity moving_average_filter is
         m_axis_tvalid  : out std_logic;
         m_axis_tdata   : out std_logic_vector(TDATA_WIDTH-1 downto 0);
         m_axis_tlast   : out std_logic;
-        m_axis_tready  : in  std_logic;
+        m_axis_tready  : in  std_logic
 
         
     );
