@@ -21,7 +21,7 @@ entity moving_average_filter is
         m_axis_tlast   : out std_logic;
         m_axis_tready  : in  std_logic;
 
-        enable_filter  : in  std_logic
+        
     );
 end moving_average_filter;
 
@@ -64,7 +64,7 @@ begin
         elsif s_axis_tvalid = '1'  then
             v_sample_in := signed(s_axis_tdata);
 
-            if enable_filter = '1' then
+            
                 if s_axis_tlast = '0' then -- Canale sinistro
                     v_sum_L := sum_L - resize(buffer_L(wr_ptr_L), ACC_WIDTH) + resize(v_sample_in, ACC_WIDTH);
                     buffer_L(wr_ptr_L) <= v_sample_in;
@@ -80,10 +80,7 @@ begin
                     sum_R <= v_sum_R;
                     tlast_reg <= '1';
                 end if;
-            else
-                sample_out <= v_sample_in;
-                tlast_reg  <= s_axis_tlast;
-            end if;
+            
             valid_reg <= '1';
         elsif m_axis_tready = '1' then
             valid_reg <= '0';
