@@ -3,14 +3,14 @@ use IEEE.STD_LOGIC_1164.ALL;
 use IEEE.NUMERIC_STD.ALL;
 
 
-entity JBBHJGJ is
+entity tb_mute_123 is
     	Generic (
 		TDATA_WIDTH		: positive := 24
 	);
 --  Port ( );
-end JBBHJGJ;
+end tb_mute_123;
 
-architecture Behavioral of JBBHJGJ is
+architecture Behavioral_123 of tb_mute_123 is
 
 
 
@@ -63,7 +63,7 @@ end component mute_controller;
 begin
 
 
-    dut: mute_controller
+    dut_123: mute_controller
 	Generic Map(
 		TDATA_WIDTH => 24
 	)
@@ -135,6 +135,7 @@ begin
 		
 		---------------------------------------------------
 		
+		
 		--------------------m_axis_tready gen----------------
 		
 --		paguro: process
@@ -180,4 +181,5 @@ begin
 		--------------------------------------
 		
 
-end Behavioral;
+end Behavioral_123;
+

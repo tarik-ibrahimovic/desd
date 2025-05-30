@@ -33,6 +33,12 @@ begin
 
     m_axis_tvalid <= m_axis_tvalid_internal;
     
+    -- The following process is in charge of the s_axis_tready signal.
+    -- The mute controller is ready to receive new data (which means s_axis_tready is one) in two cases :
+    -- if it doesn't have any valid data to send yet(m_axis_tvalid_internal = '0') and so it needs to receive new data
+    -- or if it has valid data to send (m_axis_tvalid = '1') AND it is sending the old away data to then next module (m_axis_tready = '1').
+    -- If, instead, the mute_controller has valid data to send (m_axis_tvalid = '1'), but it is NOT sending it then next module (m_axis_tready = '0'), then it isn't ready to receive new data (s_axis_tready is zero).
+
     process(m_axis_tvalid_internal, m_axis_tready )
     begin
     
@@ -45,6 +51,9 @@ begin
     end process;
    
    
+    -- The following process is in charge of receiving the data from the slave axis interface and to send it away from the master axis interface.
+    -- If mute = '1' then the data sent is composed only of zeros.
+    -- The process manages also the reset.
    
     process( aclk, aresetn, s_axis_tready_internal )
     begin
