@@ -6,7 +6,7 @@ entity balance_controller is
 	generic (
 		TDATA_WIDTH		: positive := 24;
 		BALANCE_WIDTH	: positive := 10;
-		BALANCE_STEP_2	: positive := 8		-- i.e., balance_values_per_step = 2**VOLUME_STEP_2
+		BALANCE_STEP_2	: positive := 6		-- i.e., balance_values_per_step = 2**VOLUME_STEP_2
 	);
 	Port (
 		aclk			: in std_logic;
@@ -16,6 +16,7 @@ entity balance_controller is
 		s_axis_tdata	: in std_logic_vector(TDATA_WIDTH-1 downto 0);
 		s_axis_tready	: out std_logic;
 		s_axis_tlast	: in std_logic;
+		
 
 		m_axis_tvalid	: out std_logic;
 		m_axis_tdata	: out std_logic_vector(TDATA_WIDTH-1 downto 0);
@@ -37,11 +38,13 @@ architecture Behavioral of balance_controller is
    signal balance_sign : std_logic;
 begin
    balance_internal  <= balance;
-   balance_internal_signed   <= signed(balance) - 512;
-   balance_internal_unsigned <= unsigned(balance_internal_signed);
-   N <= to_integer(shift_right(unsigned(balance_internal_unsigned), BALANCE_STEP_2)); --  + to_unsigned(2**(BALANCE_WIDTH-1), BALANCE_WIDTH)
+   balance_internal_signed   <= signed(balance) - 512; -- due to the left offset of the joystick found by measurement
+   balance_internal_unsigned <= unsigned(abs(balance_internal_signed));
+   N <= to_integer(shift_right(unsigned(balance_internal_unsigned) + 2**(BALANCE_STEP_2-1), BALANCE_STEP_2)); --  + to_unsigned(2**(BALANCE_WIDTH-1), BALANCE_WIDTH)
+   
    balance_sign <= balance_internal_signed(balance_internal_signed'left);
    selector <= balance_sign & s_axis_tlast;    
+   
    s_axis_tready <= '1' when (busy = '1' and m_axis_tready = '1') or busy ='0' else '0';
    m_axis_tvalid <= m_axis_tvalid_internal;
    
